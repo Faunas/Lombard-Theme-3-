@@ -384,5 +384,6 @@ if __name__ == "__main__":
     print("FULL:\n" + another_client.to_full_string())
 
 
+
     print("Результат сравнения двух Клиентов:", "Одинаковые" if client_ok == another_client else "Разные")
 
