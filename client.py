@@ -131,7 +131,6 @@ class Client:
             raise TypeError("Ожидаю не более одного аргумента (dict/str/Client).")
 
         if len(args) == 1:
-            print(f"Обрануженные аргументы: {args}. Провожу валидацию")
             src = args[0]
             if isinstance(src, dict):
                 payload = Client.from_kwargs(src)
@@ -274,54 +273,116 @@ class Client:
     def address(self, value: str) -> None:
         self.__address = Client.validate_address(value)
 
+    # Вывод
+
+    def to_full_string(self) -> str:
+        """Полная версия (все поля)."""
+        return (
+            f"id:               {self.id}\n"
+            f"Фамилия:          {self.last_name}\n"
+            f"Имя:              {self.first_name}\n"
+            f"Отчество:         {self.middle_name}\n"
+            f"Паспорт серия:    {self.passport_series}\n"
+            f"Паспорт номер:    {self.passport_number}\n"
+            f"Дата рождения:    {self.birth_date}\n"
+            f"Телефон:          {self.phone}\n"
+            f"Email:            {self.email}\n"
+            f"Адрес:            {self.address}"
+        )
+
+    def to_short_string(self) -> str:
+        """Краткая версия"""
+        fio = f"{self.last_name} {self.first_name} {self.middle_name}"
+        passport = f"{self.passport_series} {self.passport_number}"
+        return f"{fio} ({self.birth_date}), паспорт {passport}"
+
+    def __str__(self) -> str:
+        """По умолчанию вывожу краткую версию."""
+        return self.to_short_string()
+
+    # Сравнение
+
+    def _natural_key(self):
+        """Натуральный ключ для сравнения без id и адреса."""
+        return (
+            self.last_name,
+            self.first_name,
+            self.middle_name,
+            self.birth_date,
+            self.passport_series,
+            self.passport_number,
+            self.phone,
+            self.email,
+            # self.address,
+        )
+
+    def __eq__(self, other: object) -> bool:
+        """Сравнение объектов:
+        Сравниваем по натуральному ключу (все поля без id)
+        """
+        if not isinstance(other, Client):
+            return NotImplemented
+        # Игнорируем id, сравниваем только содержимое
+        return self._natural_key() == other._natural_key()
+
+
 
 if __name__ == "__main__":
-    def print_client(c: "Client", title: str) -> None:
-        print("=" * 60)
-        print(title)
-        print(f"id:               {c.id}")
-        print(f"Фамилия:          {c.last_name}")
-        print(f"Имя:              {c.first_name}")
-        print(f"Отчество:         {c.middle_name}")
-        print(f"Паспорт серия:    {c.passport_series}")
-        print(f"Паспорт номер:    {c.passport_number}")
-        print(f"Дата рождения:    {c.birth_date}")
-        print(f"Телефон:          {c.phone}")
-        print(f"Email:            {c.email}")
-        print(f"Адрес:            {c.address}")
-        print()
+    client_ok = Client(
+        last_name="Иванов",
+        first_name="Иван",
+        middle_name="Петрович",
+        passport_series="1234",
+        passport_number="567890",
+        birth_date="01-01-1990",
+        phone="+79991234567",
+        email="1petrov.mmm123@chipolino.fun.ru",
+        address="г. Москва, ул. Пушкина, д. 1",
+    )
+    #print_client(client_ok, "Клиент OK")
 
-    # client_ok = Client(
-    #     last_name="Иванов",
-    #     first_name="Иван",
-    #     middle_name="Петрович",
-    #     passport_series="1234",
-    #     passport_number="567890",
-    #     birth_date="01-01-1990",
-    #     phone="+79991234567",
-    #     email="1petrov.mmm123@chipolino.fun.ru",
-    #     address="г. Москва, ул. Пушкина, д. 1",
-    # )
-    # print_client(client_ok, "Клиент OK")
-
-    c_from_dict: Client | None = None
-    c_from_json: Client | None = None
-    c_from_str: Client | None = None
-
-    # Примеры альтернативной инициализации:
+    # c_from_dict: Client | None = None
+    # c_from_json: Client | None = None
+    # c_from_str: Client | None = None
+    #
+    # # Примеры альтернативной инициализации:
     # c_from_dict = Client({"id":"1","last_name":"Петров","first_name":"Пётр","middle_name":"Иванович",
     #                       "passport_series":"4321","passport_number":"098765","birth_date":"31-05-1985",
     #                       "phone":"89990001122","email":"petrov@example.com","address":"г. Казань"})
-    c_from_json = Client('{"last_name":"Сидоров","first_name":"Сидор","middle_name":"Алексеевич",'
-                         '"passport_series":"1111","passport_number":"222333","birth_date":"31-12-2000",'
-                         '"phone":"+79990001122","email":"sidorov@example.com","address":"Екатеринбург"}')
+    # c_from_json = Client('{"last_name":"Сидоров","first_name":"Сидор","middle_name":"Алексеевич",'
+    #                      '"passport_series":"1111","passport_number":"222333","birth_date":"31-12-2000",'
+    #                      '"phone":"+79990001122","email":"sidorov@example.com","address":"Екатеринбург"}')
     # c_from_str = Client("7;Романов;Роман;Сергеевич;5555;666777;15-03-1993;+79995554433;rom@example.com;СПб")
 
 
-    if c_from_dict:
-        print_client(c_from_dict, "Клиент из словаря")
-    elif c_from_json:
-        print_client(c_from_json, "Клиент из json")
-    elif c_from_str:
-        print_client(c_from_str, "Клиент из Строки")
+    # if c_from_dict:
+    #     print_client(c_from_dict, "Клиент из словаря")
+    # elif c_from_json:
+    #     print_client(c_from_json, "Клиент из json")
+    # elif c_from_str:
+    #     print_client(c_from_str, "Клиент из Строки")
+
+    # Полная и краткая версии выводов
+    print("SHORT:", client_ok)
+    print("FULL:\n" + client_ok.to_full_string())
+
+    # Сравнение
+
+    another_client = Client(
+        last_name="Иванов",
+        first_name="Иван",
+        middle_name="Петрович",
+        passport_series="1234",
+        passport_number="567890",
+        birth_date="01-01-1990",
+        phone="+79991234567",
+        email="1petrov.mmm123@chipolino.fun.ru",
+        address="г. Москва, ул. Пуkkkшкина, д. 1",
+    )
+
+    print("SHORT:", another_client)
+    print("FULL:\n" + another_client.to_full_string())
+
+
+    print("Результат сравнения двух Клиентов:", "Одинаковые" if client_ok == another_client else "Разные")
 
