@@ -1,5 +1,6 @@
 from typing import Optional
 from validators import Validator as V
+import json
 
 
 class Client:
@@ -57,30 +58,139 @@ class Client:
         """Валидация адреса. Просто проверка на 'Не пустой'"""
         return V.address_required(value)
 
+    # Перегрузка конструктора
+
+    @staticmethod
+    def from_kwargs(data: dict) -> dict:
+        """Инициализация из словаря"""
+        return dict(data)
+
+    @staticmethod
+    def from_json(text: str) -> dict:
+        """Инициализация из JSON-строки."""
+        obj = json.loads(text)
+        if not isinstance(obj, dict):
+            raise ValueError("JSON должен описывать объект ({}), а не список/значение.")
+        return dict(obj)
+
+    @staticmethod
+    def from_string(raw: str, *, sep: str = ";") -> dict:
+        """Строка с полями через разделитель.
+        Без id: last_name;first_name;middle_name;passport_series;passport_number;birth_date;phone;email;address
+        С id:  id;last_name;first_name;middle_name;passport_series;passport_number;birth_date;phone;email;address
+        """
+        parts = [p.strip() for p in raw.split(sep)]
+        if len(parts) == 9:
+            id_val = None
+            (ln, fn, mn, ps, pn, bd, ph, em, addr) = parts
+        elif len(parts) == 10:
+            id_str = parts[0]
+            if not id_str.isdigit():
+                raise ValueError("В формате со строкой первое поле (id) должно быть положительным целым числом.")
+            id_val = int(id_str)
+            (ln, fn, mn, ps, pn, bd, ph, em, addr) = parts[1:]
+        else:
+            raise ValueError(f"Ожидаю 9 полей (без id) или 10 (с id), разделённых '{sep}'.")
+        return {
+            "id": id_val,
+            "last_name": ln,
+            "first_name": fn,
+            "middle_name": mn,
+            "passport_series": ps,
+            "passport_number": pn,
+            "birth_date": bd,
+            "phone": ph,
+            "email": em,
+            "address": addr,
+        }
+
     def __init__(
             self,
+            *args,                      # допускаем один из источников для создания (dict или str или Client)
             id: Optional[int] = None,
-            *,
-            last_name: str,
-            first_name: str,
-            middle_name: str,
-            passport_series: str,
-            passport_number: str,
-            birth_date: str,  # 'ДД-ММ-ГГГГ'
-            phone: str,
-            email: str,
-            address: str,
+            last_name: Optional[str] = None,
+            first_name: Optional[str] = None,
+            middle_name: Optional[str] = None,
+            passport_series: Optional[str] = None,
+            passport_number: Optional[str] = None,
+            birth_date: Optional[str] = None,   # 'ДД-ММ-ГГГГ'
+            phone: Optional[str] = None,
+            email: Optional[str] = None,
+            address: Optional[str] = None,
+            sep: str = ";",
     ) -> None:
-        self.id = id
-        self.last_name = last_name
-        self.first_name = first_name
-        self.middle_name = middle_name
-        self.passport_series = passport_series
-        self.passport_number = passport_number
-        self.birth_date = birth_date
-        self.phone = phone
-        self.email = email
-        self.address = address
+        """
+        Один __init__ с *args для перегрузки.
+          - dict   - инициализация из словаря;
+          - str    - пробуем JSON, иначе строка с разделителем;
+          - Client - копирование полей.
+        Иначе — используем именованные параметры.
+        """
+
+        if len(args) > 1:
+            raise TypeError("Ожидаю не более одного аргумента (dict/str/Client).")
+
+        if len(args) == 1:
+            print(f"Обрануженные аргументы: {args}. Провожу валидацию")
+            src = args[0]
+            if isinstance(src, dict):
+                payload = Client.from_kwargs(src)
+            elif isinstance(src, Client):
+                payload = {
+                    "id": src.id,
+                    "last_name": src.last_name,
+                    "first_name": src.first_name,
+                    "middle_name": src.middle_name,
+                    "passport_series": src.passport_series,
+                    "passport_number": src.passport_number,
+                    "birth_date": src.birth_date,
+                    "phone": src.phone,
+                    "email": src.email,
+                    "address": src.address,
+                }
+            elif isinstance(src, str):
+                txt = src.strip()
+                try:
+                    payload = Client.from_json(txt)
+                except json.JSONDecodeError:
+                    payload = Client.from_string(txt, sep=sep)
+            else:
+                raise TypeError("Неизвестный тип для создания Клиента. Должен быть dict, str или Class Client.")
+        else:
+            payload = Client.from_kwargs({
+                "id": id,
+                "last_name": last_name,
+                "first_name": first_name,
+                "middle_name": middle_name,
+                "passport_series": passport_series,
+                "passport_number": passport_number,
+                "birth_date": birth_date,
+                "phone": phone,
+                "email": email,
+                "address": address,
+            })
+
+        # Проверяем наличие обязательных полей
+        required = [
+            "last_name", "first_name", "middle_name",
+            "passport_series", "passport_number", "birth_date",
+            "phone", "email", "address",
+        ]
+        missing = [k for k in required if (k not in payload or payload[k] is None)]
+        if missing:
+            raise ValueError("Отсутствуют обязательные поля: " + ", ".join(missing))
+
+        # Присваиваем через свойства
+        self.id = payload.get("id")
+        self.last_name = payload["last_name"]
+        self.first_name = payload["first_name"]
+        self.middle_name = payload["middle_name"]
+        self.passport_series = payload["passport_series"]
+        self.passport_number = payload["passport_number"]
+        self.birth_date = payload["birth_date"]
+        self.phone = payload["phone"]
+        self.email = payload["email"]
+        self.address = payload["address"]
 
     # Cвойства
 
@@ -181,67 +291,37 @@ if __name__ == "__main__":
         print(f"Адрес:            {c.address}")
         print()
 
-
-    client_ok = Client(
-        last_name="Иванов",
-        first_name="Иван",
-        middle_name="Петрович",
-        passport_series="1234",
-        passport_number="567890",
-        birth_date="01-01-1990",
-        phone="+79991234567",
-        email="1petrov.mmm123@chipolino.fun.ru",
-        address="г. Москва, ул. Пушкина, д. 1",
-    )
-    print_client(client_ok, "Клиент OK")
-
-    # client1 = Client(
-    #     id=1,
+    # client_ok = Client(
     #     last_name="Иванов",
     #     first_name="Иван",
     #     middle_name="Петрович",
     #     passport_series="1234",
     #     passport_number="567890",
     #     birth_date="01-01-1990",
-    #     phone="+7999123-45-67",
-    #     email="ivanov@example.com",
-    #     address="г. Москва, ул. Пушкина, д. 1"
+    #     phone="+79991234567",
+    #     email="1petrov.mmm123@chipolino.fun.ru",
+    #     address="г. Москва, ул. Пушкина, д. 1",
     # )
-    # print_client(client1, "Клиент 1 (полное заполнение)")
+    # print_client(client_ok, "Клиент OK")
 
-    # client2 = Client(
-    #     last_name="Петров",
-    #     first_name="Пётр",
-    #     passport_series="4321",
-    #     passport_number="098765",
-    #     birth_date="20-05-1985"
-    #
-    # )
-    # print_client(client2, "Клиент 2")
-    #
-    # client3 = Client()
-    # client3.id = 3
-    # client3.last_name = "Сидоров"
-    # client3.first_name = "Сидор"
-    # client3.middle_name = None
-    # client3.passport_series = "1111"
-    # client3.passport_number = "222333"
-    # client3.birth_date = "31-12-2000"
-    # client3.phone = "8 (912) 000-11-22"
-    # client3.email = "sidorov@example.com"
-    # client3.address = "г. Екатеринбург, ул. Ленина, д. 10"
-    # print_client(client3, "Клиент 3 (заполнение через свойства)")
-    #
-    # client3.phone = "+7 912 000-11-22"
-    # print_client(client3, "Клиент 3 (после изменения телефона)")
+    c_from_dict: Client | None = None
+    c_from_json: Client | None = None
+    c_from_str: Client | None = None
 
-    # Тест валидации
-    # t_client = Client(last_name="Иванов", first_name="Иван", passport_series="1234", passport_number="567890", birth_date="31-02-1990")  # Не существующая дата
-    # t_client = Client(last_name="Иванов", first_name="Иван", passport_series="12a4", passport_number="567890", birth_date="01-01-1990")  # Буква в поле passport_series
-    # t_client = Client(last_name="Иванов", first_name="Иван", passport_series="1234", passport_number="56789", birth_date="01-01-1990")   # Недостаток цифр в поле passport_number
-    # t_client = Client(last_name="Ива-нов", first_name="Иван", passport_series="1234", passport_number="567890", birth_date="01-01-1990")   # Не разрешенный символ в поле last_name
-    # t_client = Client(last_name="Иванов", first_name="Иван", passport_series="1234", passport_number="567890", birth_date="01-01-1990", phone="+7(999 ())()())(123    45-67")
-    # t_client = Client(last_name="Иванов", first_name="Иван", passport_series="1234", passport_number="567890", birth_date="01-01-1990", email="petrov.mmm123@chipolino.fun.ru")
-    t_client: Client | None = None
-    if t_client:
-        print_client(t_client, "Клиент TEST")
+    # Примеры альтернативной инициализации:
+    # c_from_dict = Client({"id":"1","last_name":"Петров","first_name":"Пётр","middle_name":"Иванович",
+    #                       "passport_series":"4321","passport_number":"098765","birth_date":"31-05-1985",
+    #                       "phone":"89990001122","email":"petrov@example.com","address":"г. Казань"})
+    c_from_json = Client('{"last_name":"Сидоров","first_name":"Сидор","middle_name":"Алексеевич",'
+                         '"passport_series":"1111","passport_number":"222333","birth_date":"31-12-2000",'
+                         '"phone":"+79990001122","email":"sidorov@example.com","address":"Екатеринбург"}')
+    # c_from_str = Client("7;Романов;Роман;Сергеевич;5555;666777;15-03-1993;+79995554433;rom@example.com;СПб")
+
+
+    if c_from_dict:
+        print_client(c_from_dict, "Клиент из словаря")
+    elif c_from_json:
+        print_client(c_from_json, "Клиент из json")
+    elif c_from_str:
+        print_client(c_from_str, "Клиент из Строки")
+
