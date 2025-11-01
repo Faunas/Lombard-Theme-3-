@@ -1,0 +1,74 @@
+[
+  {
+    "id": 1,
+    "last_name": "Иванов",
+    "first_name": "Иван",
+    "middle_name": "Петрович",
+    "passport_series": "1234",
+    "passport_number": "567890",
+    "birth_date": "01-01-1990",
+    "phone": "+79991234567",
+    "email": "ivanov@example.ru",
+    "address": "г. Москва, ул. Пушкина, д. 1"
+  },
+  {
+    "id": 2,
+    "last_name": "Петров",
+    "first_name": "Пётр",
+    "middle_name": "Иванович",
+    "passport_series": "4321",
+    "passport_number": "098765",
+    "birth_date": "31-05-1985",
+    "phone": "89991234567",
+    "email": "p.petrov@mail.ru",
+    "address": "г. Санкт-Петербург, Невский пр., д. 15"
+  },
+  {
+    "id": 3,
+    "last_name": "Сидоро1ва",
+    "first_name": "Мария",
+    "middle_name": "Сергеевна",
+    "passport_series": "1111",
+    "passport_number": "222333",
+    "birth_date": "15-03-1993",
+    "phone": "+79005556677",
+    "email": "m.sidorova@yandex.ru",
+    "address": "г. Казань, ул. Баумана, д. 7"
+  },
+  {
+    "id": 4,
+    "last_name": "Романов",
+    "first_name": "Роман",
+    "middle_name": "Сергеевич",
+    "passport_series": "5555",
+    "passport_number": "666777",
+    "birth_date": "20-07-1988",
+    "phone": "89997654321",
+    "email": "romanov.r@gmail.com",
+    "address": "г. Нижний Новгород, ул. Большая Покровская, д. 12"
+  },
+  {
+    "id": 5,
+    "last_name": "Смирнова",
+    "first_name": "Анна",
+    "middle_name": "Владимировна",
+    "passport_series": "7007",
+    "passport_number": "123456",
+    "birth_date": "09-12-1999",
+    "phone": "+79876543210",
+    "email": "anna.smirnova@example.com",
+    "address": "г. Екатеринбург, ул. Вайнера, д. 3"
+  },
+  {
+    "id": 6,
+    "last_name": "Кузнецов",
+    "first_name": "Алексей",
+    "middle_name": "Андреевич",
+    "passport_series": "2468",
+    "passport_number": "135790",
+    "birth_date": "28-02-1992",
+    "phone": "89993456780",
+    "email": "a.kuznetsov@post.ru",
+    "address": "г. Новосибирск, Красный проспект, д. 50"
+  }
+]
