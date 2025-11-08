@@ -3,21 +3,20 @@ import json
 import os
 from client import Client
 
+
 class ClientsRepJson:
-    def __init__(self, path: str, wrapper_key: str | None = None) -> None:
+    def __init__(self, path: str) -> None:
         self.path = path
-        self.wrapper_key = wrapper_key
 
-    def _unwrap(self, data: Union[list, dict]) -> list:
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict):
-            key = self.wrapper_key or "items"
-            if key in data and isinstance(data[key], list):
-                return data[key]
-        raise ValueError("Некорректный JSON: нужен массив объектов или объект с ключом 'items'.")
+    @staticmethod
+    def derive_out_path(base_path: str, suffix: str) -> str:
+        root, ext = os.path.splitext(base_path)
+        if ext.lower() == ".json":
+            return f"{root}{suffix}{ext}"
+        return f"{base_path}{suffix}.json"
 
-    def _client_to_dict(self, c: Client) -> Dict[str, Any]:
+    @staticmethod
+    def client_to_dict(c: Client) -> Dict[str, Any]:
         return {
             "id": c.id,
             "last_name": c.last_name,
@@ -31,40 +30,15 @@ class ClientsRepJson:
             "address": c.address,
         }
 
-    def _detect_wrapper(self) -> str | None:
-        try:
-            with open(self.path, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-        except FileNotFoundError:
-            return self.wrapper_key
-        except json.JSONDecodeError:
-            return self.wrapper_key
-
-        if isinstance(raw, list):
-            return None
-        if isinstance(raw, dict):
-            if self.wrapper_key and self.wrapper_key in raw and isinstance(raw[self.wrapper_key], list):
-                return self.wrapper_key
-            if "items" in raw and isinstance(raw["items"], list):
-                return "items"
-        return self.wrapper_key
-
-    def _wrap(self, records: list, wrapper: str | None) -> Union[list, dict]:
-        return {wrapper: records} if wrapper else records
-
-    def _derive_out_path(self, base_path: str, suffix: str) -> str:
-        """Возвращаем корректный путь .json"""
-        root, ext = os.path.splitext(base_path)
-        if ext.lower() == ".json":
-            return f"{root}{suffix}{ext}"
-        return f"{base_path}{suffix}.json"
+    def read_array(self, path: str) -> list:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            raise ValueError("JSON должен быть массивом объектов (списком).")
+        return data
 
     def read_all(self, tolerant: bool = False) -> Tuple[List[Client], List[Dict[str, Any]]]:
-        """Читает файл и возвращает (ok, errors)."""
-        with open(self.path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-
-        records = self._unwrap(raw)
+        records = self.read_array(self.path)
 
         ok: List[Client] = []
         errors: List[Dict[str, Any]] = []
@@ -89,50 +63,38 @@ class ClientsRepJson:
 
         return ok, errors
 
-    def write_snapshot_all_records(self, out_path: str | None = None, *, pretty: bool = True,
-                                   preserve_wrapper: bool = True) -> str:
+    def write_snapshot_all_records(self, out_path: str | None = None, *, pretty: bool = True) -> str:
         """
-        Делает снимок исходного файла
+        Снимок исходного файла: читаем массив целиком и сохраняем как есть (массив).
         """
         if out_path is None:
-            out_path = self._derive_out_path(self.path, "_snapshot")
+            out_path = self.derive_out_path(self.path, "_snapshot")
 
-        with open(self.path, "r", encoding="utf-8") as fin:
-            raw = json.load(fin)
-
-        records = self._unwrap(raw)
-        wrapper_to_use = self._detect_wrapper() if preserve_wrapper else self.wrapper_key
-        data_to_write = self._wrap(records, wrapper_to_use)
-
+        records = self.read_array(self.path)
         with open(out_path, "w", encoding="utf-8") as fout:
-            json.dump(data_to_write, fout, ensure_ascii=False, indent=2 if pretty else None)
+            json.dump(records, fout, ensure_ascii=False, indent=2 if pretty else None)
 
         return out_path
 
-    def write_all_ok(self, clients: List[Client], out_path: str | None = None,
-                     *, pretty: bool = True, preserve_wrapper: bool = True) -> str:
+    def write_all_ok(self, clients: List[Client], out_path: str | None = None, *, pretty: bool = True) -> str:
         """
-        Пишет только валидные записи (список clients) в файл с суффиксом _clean.
+        Пишет только валидные записи (список clients) в новый файл как массив объектов.
         """
         if out_path is None:
-            out_path = self._derive_out_path(self.path, "_clean")
+            out_path = self.derive_out_path(self.path, "_clean")
 
-        records = [self._client_to_dict(c) for c in clients]
-        wrapper_to_use = self._detect_wrapper() if preserve_wrapper else self.wrapper_key
-        data_to_write = self._wrap(records, wrapper_to_use)
-
+        records = [self.client_to_dict(c) for c in clients]
         with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(data_to_write, f, ensure_ascii=False, indent=2 if pretty else None)
+            json.dump(records, f, ensure_ascii=False, indent=2 if pretty else None)
 
         return out_path
 
-    def write_errors(self, errors: List[Dict[str, Any]], out_path: str | None = None,
-                     *, pretty: bool = True) -> str:
+    def write_errors(self, errors: List[Dict[str, Any]], out_path: str | None = None, *, pretty: bool = True) -> str:
         """
-        Пишет подробный отчёт об ошибках в файл с суффикстом _errors.
+        Пишет подробный отчёт об ошибках в файл.
         """
         if out_path is None:
-            out_path = self._derive_out_path(self.path, "_errors")
+            out_path = self.derive_out_path(self.path, "_errors")
         payload = {"errors": errors, "source": os.path.basename(self.path)}
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2 if pretty else None)
@@ -161,18 +123,96 @@ class ClientsRepJson:
 
         return "\n".join(lines)
 
+    def get_by_id(self, target_id: int) -> Tuple[Union[Client, None], List[Dict[str, Any]]]:
+        """
+        Возвращает (Client | None, errors) по указанному id.
+        Сначала ищем в <path>_clean.json; если его нет — валидируем исходный файл в памяти и ищем среди ok.
+        """
+        if not isinstance(target_id, int):
+            raise TypeError("id должен быть целым числом")
+
+        clean_path = self.derive_out_path(self.path, "_clean")
+        errors: List[Dict[str, Any]] = []
+
+        # Пытаемся искать в валидированном файле
+        try:
+            records = self.read_array(clean_path)
+        except FileNotFoundError:
+            ok, _ = self.read_all(tolerant=True)
+            matches = [c for c in ok if c.id == target_id]
+            if not matches:
+                errors.append({
+                    "id": target_id,
+                    "error_type": "NotFound",
+                    "message": f"Клиент с id={target_id} не найден (clean-файл отсутствует)"
+                })
+                return None, errors
+            if len(matches) > 1:
+                errors.append({
+                    "id": target_id,
+                    "error_type": "DuplicateId",
+                    "message": f"Несколько записей с id={target_id}; возвращаю первую"
+                })
+            return matches[0], errors
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Некорректный JSON в {clean_path}: {e}") from e
+
+        # В _clean лежит массив уже валидированных dict'ов
+        matches: list[dict] = []
+        for rec in records:
+            rec_id = rec.get("id", None)
+            try:
+                rec_id_norm = int(rec_id) if rec_id is not None else None
+            except Exception:
+                rec_id_norm = None
+            if rec_id_norm == target_id:
+                matches.append(rec)
+
+        if not matches:
+            errors.append({
+                "id": target_id,
+                "error_type": "NotFound",
+                "message": f"Клиент с id={target_id} не найден в валидированном наборе"
+            })
+            return None, errors
+
+        if len(matches) > 1:
+            errors.append({
+                "id": target_id,
+                "error_type": "DuplicateId",
+                "message": f"Несколько записей с id={target_id} в валидированном наборе; возвращаю первую"
+            })
+
+        return Client(matches[0]), errors
+
+
 if __name__ == '__main__':
     repo = ClientsRepJson("clients.json")
     clients, errs = repo.read_all(tolerant=True)
 
     print(repo.render_report(clients, errs, view="short"))
 
-    snap_path = repo.write_snapshot_all_records(preserve_wrapper=True)
+    snap_path = repo.write_snapshot_all_records()
     print(f"\n✓ Снимок исходных данных: {snap_path}")
 
-    clean_path = repo.write_all_ok(clients, preserve_wrapper=True)
+    clean_path = repo.write_all_ok(clients)
     print(f"✓ Очищенный файл с валидными клиентами: {clean_path}")
 
     if errs:
         err_path = repo.write_errors(errs)
         print(f"✓ Отчёт об ошибках: {err_path}")
+
+    SEARCH_ID = 4
+    found, ferrs = repo.get_by_id(SEARCH_ID)
+
+    if found:
+        print(f"\n✓ Найден по id={SEARCH_ID}:")
+        print(found.to_full_string())
+
+    # Вывод предупреждений, если они есть
+    if ferrs:
+        print("\nЗамечания/ошибки при поиске:")
+        for e in ferrs:
+            hint = f"id={e.get('id')}" if e.get('id') is not None else f"index={e.get('display_index')}"
+            print(f"- {hint}: {e['error_type']}: {e['message']}")
+
