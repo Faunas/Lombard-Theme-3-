@@ -2,6 +2,7 @@ from typing import List, Tuple, Dict, Any, Union
 import json
 import os
 from client import Client
+from client_short import ClientShort
 
 
 class ClientsRepJson:
@@ -134,7 +135,6 @@ class ClientsRepJson:
         clean_path = self.derive_out_path(self.path, "_clean")
         errors: List[Dict[str, Any]] = []
 
-        # Пытаемся искать в валидированном файле
         try:
             records = self.read_array(clean_path)
         except FileNotFoundError:
@@ -157,7 +157,6 @@ class ClientsRepJson:
         except json.JSONDecodeError as e:
             raise ValueError(f"Некорректный JSON в {clean_path}: {e}") from e
 
-        # В _clean лежит массив уже валидированных dict'ов
         matches: list[dict] = []
         for rec in records:
             rec_id = rec.get("id", None)
@@ -185,6 +184,27 @@ class ClientsRepJson:
 
         return Client(matches[0]), errors
 
+    def get_k_n_short_list(self, k: int, n: int, *, prefer_contact: str = "phone") -> List[ClientShort]:
+        """
+        Возвращает страницу k размером n из валидированных записей в виде объектов ClientShort.
+        """
+        if not (isinstance(k, int) and isinstance(n, int) and k > 0 and n > 0):
+            raise ValueError("k и n должны быть положительными целыми числами")
+
+        clean_path = self.derive_out_path(self.path, "_clean")
+
+        try:
+            records = self.read_array(clean_path)
+        except FileNotFoundError:
+            ok, _ = self.read_all(tolerant=True)
+            records = [self.client_to_dict(c) for c in ok]
+
+        shorts = [ClientShort(rec, prefer_contact=prefer_contact) for rec in records]
+
+        start = (k - 1) * n
+        end = start + n
+        return shorts[start:end]
+
 
 if __name__ == '__main__':
     repo = ClientsRepJson("clients.json")
@@ -209,10 +229,25 @@ if __name__ == '__main__':
         print(f"\n✓ Найден по id={SEARCH_ID}:")
         print(found.to_full_string())
 
-    # Вывод предупреждений, если они есть
     if ferrs:
         print("\nЗамечания/ошибки при поиске:")
         for e in ferrs:
             hint = f"id={e.get('id')}" if e.get('id') is not None else f"index={e.get('display_index')}"
             print(f"- {hint}: {e['error_type']}: {e['message']}")
 
+    try:
+        total = len(repo.read_array(repo.derive_out_path(repo.path, "_clean")))
+    except FileNotFoundError:
+        total = len(repo.read_all(tolerant=True)[0])
+
+    elements_on_sheet = 3 # Кол-во элементов на странице
+    find_sheet_number = 1 # Страница
+
+    total_pages = (total + elements_on_sheet - 1) // elements_on_sheet
+
+    print("\nВсего элементов:", total, "Всего страниц:", total_pages)
+
+    page = repo.get_k_n_short_list(find_sheet_number, elements_on_sheet)
+    print(f"Страница {find_sheet_number} по {elements_on_sheet} элемента (short):")
+    for s in page:
+        print("-", s)
