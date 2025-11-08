@@ -214,6 +214,45 @@ class ClientsRepJson:
             clients, _ = self.read_all(tolerant=True)
         return sorted(clients, key=lambda c: c.last_name, reverse=not ascending)
 
+    def add_client(self, data: Union[Client, dict, str], *, pretty: bool = True) -> Client:
+        try:
+            records = self.read_array(self.path)
+        except FileNotFoundError:
+            records = []
+
+        # Валидируем добавляемого и получаем полноценный Client
+        if isinstance(data, Client):
+            new_client = data
+        elif isinstance(data, (dict, str)):
+            new_client = Client(data)
+        else:
+            raise TypeError("data должен быть Client, dict или str (JSON/строка с полями)")
+
+        # Проверка дубликата по Client.__eq__ среди уже валидных записей
+        existing_ok, _ = self.read_all(tolerant=True)
+        dup_ids = [c.id for c in existing_ok if c == new_client]
+        if dup_ids:
+            raise ValueError(f"DuplicateClient: такой клиент уже существует (id={', '.join(map(str, dup_ids))})")
+
+        # Назначаем новый id = max(id) + 1 по исходному файлу
+        existing_ids: list[int] = []
+        for r in records:
+            rid = r.get("id")
+            try:
+                if rid is not None:
+                    existing_ids.append(int(rid))
+            except Exception:
+                pass
+        new_id = (max(existing_ids) if existing_ids else 0) + 1
+
+        new_client.id = new_id
+        records.append(self.client_to_dict(new_client))
+
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=2 if pretty else None)
+
+        return new_client
+
 
 if __name__ == '__main__':
     repo = ClientsRepJson("clients.json")
@@ -268,3 +307,16 @@ if __name__ == '__main__':
     print("\nОтсортировано по фамилии (DESC):")
     for c in repo.sort_by_last_name(ascending=False):
         print("-", c)
+
+    added = repo.add_client({
+        "last_name": "Новиков",
+        "first_name": "Никита",
+        "middle_name": "Сергеевич",
+        "passport_series": "8888",
+        "passport_number": "112233",
+        "birth_date": "05-05-1995",
+        "phone": "+79995551122",
+        "email": "novikov.nikita@gmail.com",
+        "address": "г. Самара, ул. Молодогвардейская, д. 10"
+    })
+    print(f"\n✓ Добавлен клиент id={added.id}: {added}")
