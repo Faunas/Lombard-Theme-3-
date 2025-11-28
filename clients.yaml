@@ -1,0 +1,65 @@
+- id: 1
+  last_name: Иванов
+  first_name: Иван
+  middle_name: Петрович
+  passport_series: "1234"
+  passport_number: "567890"
+  birth_date: "01-01-1990"
+  phone: "+79991234567"
+  email: "ivanov.i@example.ru"
+  address: "г. Москва, ул. Пушкина, д. 1"
+
+- id: 2
+  last_name: Петров
+  first_name: Пётр
+  middle_name: Иванович
+  passport_series: "4321"
+  passport_number: "098765"
+  birth_date: "31-05-1985"
+  phone: "89990001122"
+  email: "petrov.p@gmail.com"
+  address: "г. Казань, ул. Баумана, д. 7"
+
+- id: 3
+  last_name: Романов
+  first_name: Роман
+  middle_name: Сергеевич
+  passport_series: "5555"
+  passport_number: "666777"
+  birth_date: "20-07-1988"
+  phone: "89997654321"
+  email: "romanov.r@gmail.com"
+  address: "г. Нижний Новгород, ул. Большая Покровская, д. 12"
+
+- id: 4
+  last_name: Смирнова
+  first_name: Анна
+  middle_name: Владимировна
+  passport_series: "7007"
+  passport_number: "123456"
+  birth_date: "09-12-1999"
+  phone: "+79990002233"
+  email: "smirnova.anna@yandex.ru"
+  address: "г. Санкт-Петербург, Невский пр., д. 45"
+
+- id: 5
+  last_name: Кузнецов
+  first_name: Алексей
+  middle_name: Андреевич
+  passport_series: "2468"
+  passport_number: "135790"
+  birth_date: "28-02-1992"
+  phone: "89031234567"
+  email: "alex.kuz@example.com"
+  address: "г. Екатеринбург, ул. Малышева, д. 15"
+
+- id: 6
+  last_name: Новиков
+  first_name: Никита
+  middle_name: Сергеевич
+  passport_series: "8888"
+  passport_number: "112233"
+  birth_date: "05-05-1995"
+  phone: "+79995551122"
+  email: "novikov.nikita@gmail.com"
+  address: "г. Самара, ул. Молодогвардейская, д. 10"
