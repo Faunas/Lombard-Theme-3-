@@ -251,7 +251,7 @@ class ClientsRepJson:
         with open(self.path, "w", encoding="utf-8") as f:
             json.dump(records, f, ensure_ascii=False, indent=2 if pretty else None)
 
-        return new_client
+        print(f"✓ Добавлен клиент id={new_client.id}: {new_client}")
 
     def replace_by_id(self, target_id: int, data: Union[Client, dict, str], *, pretty: bool = True) -> Client:
         if not isinstance(target_id, int):
@@ -299,7 +299,72 @@ class ClientsRepJson:
         with open(self.path, "w", encoding="utf-8") as f:
             json.dump(records, f, ensure_ascii=False, indent=2 if pretty else None)
 
-        return new_client
+        print(f"\n✓ Обновлён клиент id={new_client.id}: {new_client}")
+
+
+    def delete_by_id(self, target_id: int, *, pretty: bool = True) -> Tuple[Union[Client, None], List[Dict[str, Any]]]:
+        """
+        Удаляет запись с указанным id из исходного clients.json.
+        Возвращает (удалённый Client | None, errors).
+        """
+        if not isinstance(target_id, int):
+            raise TypeError("id должен быть целым числом")
+
+        errors: List[Dict[str, Any]] = []
+
+        try:
+            records = self.read_array(self.path)
+        except FileNotFoundError:
+            errors.append({
+                "id": target_id,
+                "error_type": "NotFound",
+                "message": f"Файл {self.path} не найден"
+            })
+            return None, errors
+
+        idxs: List[int] = []
+        for i, rec in enumerate(records):
+            rec_id = rec.get("id", None)
+            try:
+                rec_id_norm = int(rec_id) if rec_id is not None else None
+            except Exception:
+                rec_id_norm = None
+            if rec_id_norm == target_id:
+                idxs.append(i)
+
+        if not idxs:
+            errors.append({
+                "id": target_id,
+                "error_type": "NotFound",
+                "message": f"Клиент с id={target_id} не найден"
+            })
+            return None, errors
+
+        if len(idxs) > 1:
+            errors.append({
+                "id": target_id,
+                "error_type": "DuplicateId",
+                "message": f"Найдено несколько записей с id={target_id}; удаление отменено"
+            })
+            return None, errors
+
+        idx = idxs[0]
+        rec = records.pop(idx)
+
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=2 if pretty else None)
+
+        try:
+            deleted_client = Client(rec)
+            return deleted_client, errors
+        except Exception as e:
+            errors.append({
+                "id": target_id,
+                "error_type": type(e).__name__,
+                "message": f"Удалено, но запись невалидна: {str(e)}"
+            })
+            return None, errors
+
 
 
 if __name__ == '__main__':
@@ -367,7 +432,6 @@ if __name__ == '__main__':
     #     "email": "novikov.nikita@gmail.com",
     #     "address": "г. Самара, ул. Молодогвардейская, д. 10"
     # })
-    # print(f"\n✓ Добавлен клиент id={added.id}: {added}")
 
     updated = repo.replace_by_id(7, {
         "last_name": "Романов",
@@ -380,5 +444,13 @@ if __name__ == '__main__':
         "email": "romanov.r.updated@gmail.com",
         "address": "г. Нижний Новгород, ул. Большая Покровская, д. 12"
     })
-    print(f"\n✓ Обновлён клиент id={updated.id}: {updated}")
 
+    DEL_ID = 4
+    deleted, derrs = repo.delete_by_id(DEL_ID)
+    if deleted:
+        print(f"\n✓ Удалён клиент id={DEL_ID}: {deleted}")
+    else:
+        print(f"\n✗ Удаление id={DEL_ID}:")
+    for e in derrs:
+        hint = f"id={e.get('id')}" if e.get('id') is not None else f"index={e.get('display_index')}"
+        print(f"- {hint}: {e['error_type']}: {e['message']}")
