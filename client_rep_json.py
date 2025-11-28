@@ -365,6 +365,16 @@ class ClientsRepJson:
             })
             return None, errors
 
+    def get_count(self) -> int:
+        clean_path = self.derive_out_path(self.path, "_clean")
+        try:
+            records = self.read_array(clean_path)
+            return len(records)
+        except FileNotFoundError:
+            ok, _ = self.read_all(tolerant=True)
+            return len(ok)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Некорректный JSON в {clean_path}: {e}") from e
 
 
 if __name__ == '__main__':
@@ -454,4 +464,7 @@ if __name__ == '__main__':
     for e in derrs:
         hint = f"id={e.get('id')}" if e.get('id') is not None else f"index={e.get('display_index')}"
         print(f"- {hint}: {e['error_type']}: {e['message']}")
+
+    count_valid = repo.get_count()
+    print(f"\nВсего валидных клиентов: {count_valid}")
 
