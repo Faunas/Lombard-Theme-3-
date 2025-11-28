@@ -454,3 +454,4 @@ if __name__ == '__main__':
     for e in derrs:
         hint = f"id={e.get('id')}" if e.get('id') is not None else f"index={e.get('display_index')}"
         print(f"- {hint}: {e['error_type']}: {e['message']}")
+
