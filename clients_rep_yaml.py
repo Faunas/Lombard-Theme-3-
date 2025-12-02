@@ -89,6 +89,66 @@ class ClientsRepYaml:
 
         return out_path
 
+    def get_by_id(self, target_id: int) -> Tuple[Union[Client, None], List[Dict[str, Any]]]:
+        """
+        Возвращает (Client | None, errors) по указанному id.
+        """
+        if not isinstance(target_id, int):
+            raise TypeError("id должен быть целым числом")
+
+        clean_path = self.derive_out_path(self.path, "_clean")
+        errors: List[Dict[str, Any]] = []
+
+        # Пробуем искать в валидированном файле
+        try:
+            records = self.read_array(clean_path)
+        except FileNotFoundError:
+            ok, _ = self.read_all(tolerant=True)
+            matches = [c for c in ok if c.id == target_id]
+            if not matches:
+                errors.append({
+                    "id": target_id,
+                    "error_type": "NotFound",
+                    "message": f"Клиент с id={target_id} не найден (clean-файл отсутствует)"
+                })
+                return None, errors
+            if len(matches) > 1:
+                errors.append({
+                    "id": target_id,
+                    "error_type": "DuplicateId",
+                    "message": f"Несколько записей с id={target_id}; возвращаю первую"
+                })
+            return matches[0], errors
+        except yaml.YAMLError as e:
+            raise ValueError(f"Некорректный YAML в {clean_path}: {e}") from e
+
+        # В _clean лежит массив уже валидированных dict'ов
+        matches: list[dict] = []
+        for rec in records:
+            rec_id = rec.get("id", None)
+            try:
+                rec_id_norm = int(rec_id) if rec_id is not None else None
+            except Exception:
+                rec_id_norm = None
+            if rec_id_norm == target_id:
+                matches.append(rec)
+
+        if not matches:
+            errors.append({
+                "id": target_id,
+                "error_type": "NotFound",
+                "message": f"Клиент с id={target_id} не найден в валидированном наборе"
+            })
+            return None, errors
+
+        if len(matches) > 1:
+            errors.append({
+                "id": target_id,
+                "error_type": "DuplicateId",
+                "message": f"Несколько записей с id={target_id} в валидированном наборе; возвращаю первую"
+            })
+
+        return Client(matches[0]), errors
 
 if __name__ == "__main__":
     repo = ClientsRepYaml("clients.yaml")
@@ -97,3 +157,10 @@ if __name__ == "__main__":
 
     out_file = repo.write_all_ok(clients)
     print(f"✓ Записано валидных записей в: {out_file}")
+
+    c, errs = repo.get_by_id(4)
+    if c:
+        print(c.to_full_string())
+    if errs:
+        for e in errs:
+            print(f"- id={e.get('id')}: {e['error_type']}: {e['message']}")
