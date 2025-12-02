@@ -170,6 +170,15 @@ class ClientsRepYaml:
         end = start + n
         return shorts[start:end]
 
+    def sort_by_last_name(self, ascending: bool = True) -> List[Client]:
+        clean_path = self.derive_out_path(self.path, "_clean")
+        try:
+            records = self.read_array(clean_path)
+            clients = [Client(rec) for rec in records]
+        except FileNotFoundError:
+            clients, _ = self.read_all(tolerant=True)
+        return sorted(clients, key=lambda c: c.last_name, reverse=not ascending)
+
 
 if __name__ == "__main__":
     repo = ClientsRepYaml("clients.yaml")
@@ -184,3 +193,11 @@ if __name__ == "__main__":
     print("\nСтраница 1 по 3 элемента (short):")
     for s in page:
         print("-", s)
+
+    print("\nОтсортировано по фамилии (ASC):")
+    for c in repo.sort_by_last_name(ascending=True):
+        print("-", c)
+
+    print("\nОтсортировано по фамилии (DESC):")
+    for c in repo.sort_by_last_name(ascending=False):
+        print("-", c)
