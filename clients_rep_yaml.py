@@ -2,6 +2,7 @@ from typing import List, Tuple, Dict, Any, Union
 import os
 import yaml
 from client import Client
+from client_short import ClientShort
 
 
 class ClientsRepYaml:
@@ -99,7 +100,6 @@ class ClientsRepYaml:
         clean_path = self.derive_out_path(self.path, "_clean")
         errors: List[Dict[str, Any]] = []
 
-        # Пробуем искать в валидированном файле
         try:
             records = self.read_array(clean_path)
         except FileNotFoundError:
@@ -122,7 +122,6 @@ class ClientsRepYaml:
         except yaml.YAMLError as e:
             raise ValueError(f"Некорректный YAML в {clean_path}: {e}") from e
 
-        # В _clean лежит массив уже валидированных dict'ов
         matches: list[dict] = []
         for rec in records:
             rec_id = rec.get("id", None)
@@ -150,6 +149,28 @@ class ClientsRepYaml:
 
         return Client(matches[0]), errors
 
+    def get_k_n_short_list(self, k: int, n: int, *, prefer_contact: str = "phone") -> List[ClientShort]:
+        """
+        Возвращает страницу k размером n из валидированных записей в виде объектов ClientShort.
+        """
+        if not (isinstance(k, int) and isinstance(n, int) and k > 0 and n > 0):
+            raise ValueError("k и n должны быть положительными целыми числами")
+
+        clean_path = self.derive_out_path(self.path, "_clean")
+
+        try:
+            records = self.read_array(clean_path)
+        except FileNotFoundError:
+            ok, _ = self.read_all(tolerant=True)
+            records = [self.client_to_dict(c) for c in ok]
+
+        shorts = [ClientShort(rec, prefer_contact=prefer_contact) for rec in records]
+
+        start = (k - 1) * n
+        end = start + n
+        return shorts[start:end]
+
+
 if __name__ == "__main__":
     repo = ClientsRepYaml("clients.yaml")
     clients, errs = repo.read_all(tolerant=True)
@@ -158,9 +179,8 @@ if __name__ == "__main__":
     out_file = repo.write_all_ok(clients)
     print(f"✓ Записано валидных записей в: {out_file}")
 
-    c, errs = repo.get_by_id(4)
-    if c:
-        print(c.to_full_string())
-    if errs:
-        for e in errs:
-            print(f"- id={e.get('id')}: {e['error_type']}: {e['message']}")
+    # Пример получения страницы 1 по 3 элемента
+    page = repo.get_k_n_short_list(1, 3)
+    print("\nСтраница 1 по 3 элемента (short):")
+    for s in page:
+        print("-", s)
