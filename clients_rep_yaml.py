@@ -223,6 +223,62 @@ class ClientsRepYaml:
         print(f"✓ Добавлен клиент id={new_client.id}: {new_client}")
         return new_client
 
+    def replace_by_id(self, target_id: int, data: Union[Client, dict, str], *, pretty: bool = True) -> Client:
+        if not isinstance(target_id, int):
+            raise TypeError("id должен быть целым числом")
+
+        found, errs = self.get_by_id(target_id)
+        if not found:
+            msg = errs[0]["message"] if errs else f"Клиент с id={target_id} не найден"
+            raise ValueError(f"NotFound: {msg}")
+
+        if isinstance(data, Client):
+            new_client = data
+        elif isinstance(data, (dict, str)):
+            new_client = Client(data)
+        else:
+            raise TypeError("data должен быть Client, dict или str (JSON/строка с полями)")
+
+        if new_client.id is not None and new_client.id != target_id:
+            raise ValueError(f"MismatchedId: payload id={new_client.id} != target id={target_id}")
+
+        existing_ok, _ = self.read_all(tolerant=True)
+        dup_ids = [c.id for c in existing_ok if c.id != target_id and c == new_client]
+        if dup_ids:
+            raise ValueError(f"DuplicateClient: такой клиент уже существует (id={', '.join(map(str, dup_ids))})")
+
+        records = self.read_array(self.path)
+        idxs: List[int] = []
+        for i, rec in enumerate(records):
+            rec_id = (rec or {}).get("id", None)
+            try:
+                rec_id_norm = int(rec_id) if rec_id is not None else None
+            except Exception:
+                rec_id_norm = None
+            if rec_id_norm == target_id:
+                idxs.append(i)
+
+        if not idxs:
+            raise ValueError(f"NotFound: id={target_id}")
+        if len(idxs) > 1:
+            raise ValueError(f"DuplicateId: найдено несколько записей с id={target_id}; обновление отменено")
+
+        new_client.id = target_id
+        records[idxs[0]] = self.client_to_dict(new_client)
+
+        with open(self.path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(
+                records,
+                f,
+                allow_unicode=True,
+                sort_keys=False,
+                indent=2,
+                default_flow_style=not pretty
+            )
+
+        print(f"\n✓ Обновлён клиент id={new_client.id}: {new_client}")
+        return new_client
+
 
 
 if __name__ == "__main__":
@@ -259,3 +315,15 @@ if __name__ == "__main__":
     #     "address": "г. Самара, ул. Молодогвардейская, д. 10"
     # })
     # print(f"Итог: добавлен id={added.id}")
+
+    updated = repo.replace_by_id(4, {
+        "last_name": "Романов",
+        "first_name": "Роман",
+        "middle_name": "Сергеевич",
+        "passport_series": "5555",
+        "passport_number": "666777",
+        "birth_date": "20-07-1988",
+        "phone": "89997654321",
+        "email": "romanov.r.updated@gmail.com",
+        "address": "г. Нижний Новгород, ул. Большая Покровская, д. 12"
+    })
