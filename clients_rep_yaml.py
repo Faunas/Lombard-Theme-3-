@@ -349,6 +349,16 @@ class ClientsRepYaml:
             })
             return None, errors
 
+    def get_count(self) -> int:
+        """
+        Возвращает количество элементов
+        """
+        clean_path = self.derive_out_path(self.path, "_clean")
+        try:
+            return len(self.read_array(clean_path))
+        except FileNotFoundError:
+            return len(self.read_all(tolerant=True)[0])
+
 
 if __name__ == "__main__":
     repo = ClientsRepYaml("clients.yaml")
@@ -373,7 +383,7 @@ if __name__ == "__main__":
         print("-", c)
 
     # added = repo.add_client({
-    #     "last_name": "Романов",
+    #     "last_name": "РЛобыкин",
     #     "first_name": "Никита",
     #     "middle_name": "Сергеевич",
     #     "passport_series": "8888",
@@ -397,13 +407,16 @@ if __name__ == "__main__":
     #     "address": "г. Нижний Новгород, ул. Большая Покровская, д. 12"
     # })
 
-    DEL_ID = 7
-    deleted, derrs = repo.delete_by_id(DEL_ID)
-    if deleted:
-        print(f"\n✓ Удалён клиент id={DEL_ID}: {deleted}")
-    else:
-        print(f"\n✗ Удаление id={DEL_ID}:")
-    for e in derrs:
-        hint = f"id={e.get('id')}" if e.get('id') is not None else f"index={e.get('display_index')}"
-        print(f"- {hint}: {e['error_type']}: {e['message']}")
+    # DEL_ID = 7
+    # deleted, derrs = repo.delete_by_id(DEL_ID)
+    # if deleted:
+    #     print(f"\n✓ Удалён клиент id={DEL_ID}: {deleted}")
+    # else:
+    #     print(f"\n✗ Удаление id={DEL_ID}:")
+    # for e in derrs:
+    #     hint = f"id={e.get('id')}" if e.get('id') is not None else f"index={e.get('display_index')}"
+    #     print(f"- {hint}: {e['error_type']}: {e['message']}")
+
+    cnt = repo.get_count()
+    print(f"✓ Всего элементов: {cnt}")
 
