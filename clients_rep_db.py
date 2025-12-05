@@ -355,6 +355,18 @@ class ClientsRepDB:
             return None, errors
 
 
+    # ===== 4(f) Получить количество элементов =====
+    def get_count(self) -> int:
+        """
+        Возвращает общее количество записей в таблице clients.
+        """
+        sql = "SELECT COUNT(*) AS cnt FROM clients;"
+        with self._connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql)
+            row = cur.fetchone()
+            return int(row["cnt"])
+
+
     # Массовая загрузка из clients_clean.json
     def import_from_clean_json(
             self,
@@ -530,5 +542,9 @@ if __name__ == "__main__":
     for e in derrs:
         hint = f"id={e.get('id')}" if e.get('id') is not None else "?"
         print(f"- {hint}: {e['error_type']}: {e['message']}")
+
+    # f) get_count
+    total = repo.get_count()
+    print(f"\n✓ Количество элементов (get_count): {total}")
 
 
