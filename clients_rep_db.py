@@ -296,6 +296,64 @@ class ClientsRepDB:
         c.id = target_id
         return c
 
+    # ===== 4(e) Удалить элемент списка по ID =====
+    def delete_by_id(self, target_id: int) -> tuple[Optional[Client], list[dict[str, Any]]]:
+        """
+        Удаляет запись по id и возвращает (удалённый Client | None, errors).
+        Ошибки (как в файловых репозиториях):
+          - NotFound: если записи нет
+          - Если данные строки невалидны для Client(...): "Удалено, но запись невалидна"
+        """
+        if not isinstance(target_id, int):
+            raise TypeError("id должен быть целым числом")
+
+        errors: list[dict[str, Any]] = []
+
+        # Сначала читаем строку - чтобы получить клиента, которого будет удалять
+        select_sql = """
+            SELECT
+                id,
+                last_name,
+                first_name,
+                middle_name,
+                passport_series,
+                passport_number,
+                birth_date,
+                phone,
+                email,
+                address
+            FROM clients
+            WHERE id = %s;
+        """
+        delete_sql = "DELETE FROM clients WHERE id = %s;"
+
+        with self._connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(select_sql, (target_id,))
+            row = cur.fetchone()
+
+            if row is None:
+                errors.append({
+                    "id": target_id,
+                    "error_type": "NotFound",
+                    "message": f"Клиент с id={target_id} не найден"
+                })
+                return None, errors
+
+            # Удаляем
+            cur.execute(delete_sql, (target_id,))
+
+        # Пробуем вернуть как Client
+        try:
+            payload = self._row_to_client_payload(row)
+            return Client(payload), errors
+        except Exception as e:
+            errors.append({
+                "id": target_id,
+                "error_type": type(e).__name__,
+                "message": f"Удалено, но запись невалидна: {str(e)}"
+            })
+            return None, errors
+
 
     # Массовая загрузка из clients_clean.json
     def import_from_clean_json(
@@ -461,5 +519,16 @@ if __name__ == "__main__":
         print(f"✓ Обновлён: id={updated.id} — {updated}")
     except ValueError as e:
         print(f"✗ Не удалось обновить: {e}")
+
+    # e) Удаление по ID
+    print("\nУдаляем обновлённого клиента...")
+    deleted, derrs = repo.delete_by_id(updated.id)
+    if deleted:
+        print(f"✓ Удалён: id={deleted.id} — {deleted}")
+    else:
+        print("✗ Ошибки при удалении:")
+    for e in derrs:
+        hint = f"id={e.get('id')}" if e.get('id') is not None else "?"
+        print(f"- {hint}: {e['error_type']}: {e['message']}")
 
 
