@@ -233,6 +233,70 @@ class ClientsRepDB:
         return c
 
 
+    # ===== 4(d) Заменить элемент списка по ID =====
+    def replace_by_id(self, target_id: int, data: "Client | dict | str") -> Client:
+        """
+        Обновляет запись по id в PostgreSQL.
+          - запись с id должна существовать (иначе NotFound);
+          - защита от дубля по паспорту: DuplicateClient (уникальный ключ).
+        Возвращает обновлённый Client (c id=target_id).
+        """
+        if not isinstance(target_id, int):
+            raise TypeError("id должен быть целым числом")
+
+        # Валидация через Client
+        if isinstance(data, Client):
+            c = data
+        elif isinstance(data, (dict, str)):
+            c = Client(data)
+        else:
+            raise TypeError("data должен быть Client, dict или str")
+
+        # id в payload, если задан, должен совпадать с target_id
+        if c.id is not None and c.id != target_id:
+            raise ValueError(f"Несоответствие ID: payload id={c.id} != target id={target_id}")
+
+        bd = self._dd_mm_yyyy_to_date(c.birth_date)
+
+        sql = """
+            UPDATE clients
+            SET
+                last_name       = %s,
+                first_name      = %s,
+                middle_name     = %s,
+                passport_series = %s,
+                passport_number = %s,
+                birth_date      = %s,
+                phone           = %s,
+                email           = %s,
+                address         = %s
+            WHERE id = %s
+            RETURNING id;
+        """
+        params = (
+            c.last_name, c.first_name, c.middle_name,
+            c.passport_series, c.passport_number,
+            bd, c.phone, c.email, c.address,
+            target_id,
+        )
+
+        try:
+            with self._connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(sql, params)
+                row = cur.fetchone()
+        except psycopg2.IntegrityError as e:
+            # Проверка уникальности по паспорту
+            if getattr(e, "pgcode", None) == errorcodes.UNIQUE_VIOLATION:
+                raise ValueError("DuplicateClient: клиент с таким паспортом уже существует") from e
+            raise
+
+        if not row:
+            raise ValueError(f"NotFound: Клиент с id={target_id} не найден")
+
+        c.id = target_id
+        return c
+
+
     # Массовая загрузка из clients_clean.json
     def import_from_clean_json(
             self,
@@ -330,7 +394,7 @@ if __name__ == "__main__":
 
     # Заполняем таблицу клиентами из clients_clean
     print("Импорт из clients_clean.json ...")
-    summary = repo.import_from_clean_json("clients_clean.json", replace=False, preserve_ids=True)
+    summary = repo.import_from_clean_json("clients_clean.json", replace=True, preserve_ids=True)
     print(f"✓ Импорт завершён: total={summary['total']}, inserted={summary['inserted']}, "
           f"skipped={summary['skipped_conflict']}, invalid={summary['invalid']}")
     if summary["errors"]:
@@ -379,4 +443,23 @@ if __name__ == "__main__":
         print(f"✓ Добавлен: id={added.id} — {added}")
     except ValueError as e:
         print(f"✗ Не удалось добавить: {e}")
+
+    # d) Обновление по ID
+    print("\nОбновляем добавленного клиента (сменим ФИО и email)")
+    try:
+        updated = repo.replace_by_id(added.id, {
+            "last_name": "Романов",
+            "first_name": "Роман",
+            "middle_name": "Сергеевич",
+            "passport_series": added.passport_series,   # оставим прежний паспорт
+            "passport_number": added.passport_number,
+            "birth_date": added.birth_date,
+            "phone": added.phone,
+            "email": "romanov.updated@example.com",
+            "address": added.address,
+        })
+        print(f"✓ Обновлён: id={updated.id} — {updated}")
+    except ValueError as e:
+        print(f"✗ Не удалось обновить: {e}")
+
 
