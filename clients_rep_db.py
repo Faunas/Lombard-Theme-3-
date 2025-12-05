@@ -9,8 +9,7 @@ from client_short import ClientShort
 
 class ClientsRepDB:
     """
-    Репозиторий клиентов в PostgreSQL (только сырые SQL-запросы, без ORM/фреймворков).
-    В конструкторе по умолчанию выполняется auto-migrate (CREATE TABLE IF NOT EXISTS, индексы/уники).
+    Класс для работы с клиентами через PostgreSQL
     """
 
     def __init__(
@@ -86,7 +85,6 @@ class ClientsRepDB:
         }
 
     # ===== 4(a) Получить объект по ID =====
-
     def get_by_id(self, target_id: int) -> Tuple[Optional[Client], List[Dict[str, Any]]]:
         """
         Возвращает (Client | None, errors) по id из PostgreSQL.
@@ -140,6 +138,53 @@ class ClientsRepDB:
                 "message": f"Данные в БД невалидны: {str(e)}"
             })
             return None, errors
+
+    # ===== 4(b) Получить страницу k размером n объектов класса short =====
+    def get_k_n_short_list(self, k: int, n: int, *, prefer_contact: str = "phone") -> List[ClientShort]:
+        """
+        Возвращает страницу k (нумерация с 1) размером n в виде объектов ClientShort.
+        Порядок фиксированный: ORDER BY id ASC.
+        """
+        if not (isinstance(k, int) and isinstance(n, int) and k > 0 and n > 0):
+            raise ValueError("k и n должны быть положительными целыми числами")
+
+        offset = (k - 1) * n
+
+        sql = """
+            SELECT
+                id,
+                last_name,
+                first_name,
+                middle_name,
+                passport_series,
+                passport_number,
+                birth_date,
+                phone,
+                email
+            FROM clients
+            ORDER BY id ASC
+            LIMIT %s OFFSET %s;
+        """
+        with self._connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, (n, offset))
+            rows = cur.fetchall()
+
+        result: List[ClientShort] = []
+        for r in rows:
+            payload = {
+                "id": r["id"],
+                "last_name": r["last_name"],
+                "first_name": r["first_name"],
+                "middle_name": r["middle_name"],
+                "passport_series": (r["passport_series"] or "").strip(),
+                "passport_number": (r["passport_number"] or "").strip(),
+                "birth_date": self._date_to_dd_mm_yyyy(r["birth_date"]),
+                "phone": r["phone"],
+                "email": r["email"],
+            }
+            result.append(ClientShort(payload, prefer_contact=prefer_contact))
+        return result
+
 
     # Функция для добавления первого тестового клиента в таблицу
     def _seed_if_empty(self) -> Optional[int]:
@@ -197,3 +242,16 @@ if __name__ == "__main__":
         print("\nЗамечания/ошибки:")
         for e in errs:
             print(f"- id={e.get('id')}: {e['error_type']}: {e['message']}")
+
+    # Пагинация: страница 1 по 3 элемента
+    print("\nСтраница 1 (по 3 элемента):")
+    page = repo.get_k_n_short_list(1, 3, prefer_contact="phone")
+    for s in page:
+        print("-", s)
+
+    # Пагинация: страница 2 по 3 элемента
+    print("\nСтраница 2 (по 3 элемента):")
+    page2 = repo.get_k_n_short_list(2, 3, prefer_contact="email")
+    for s in page2:
+        print("-", s)
+
