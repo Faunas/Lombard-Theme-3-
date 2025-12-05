@@ -1,8 +1,9 @@
 from typing import Tuple, List, Dict, Optional, Any
 from datetime import date, datetime
 import psycopg2
+import json
 from psycopg2.extras import RealDictCursor
-
+from psycopg2 import errorcodes
 from client import Client
 from client_short import ClientShort
 
@@ -185,36 +186,136 @@ class ClientsRepDB:
             result.append(ClientShort(payload, prefer_contact=prefer_contact))
         return result
 
+    # ===== 4(c) Добавить объект в таблицу (формируется новый ID) =====
+    def add_client(self, data: "Client | dict | str") -> Client:
+        """
+        Вставляет клиента в БД, ID генерируется.
+        Возвращает объект Client с присвоенным id.
+        Проверяем уникальность по (passport_series, passport_number).
+        """
+        # Валидация и нормализация входа в единый Client
+        if isinstance(data, Client):
+            c = data
+        elif isinstance(data, (dict, str)):
+            c = Client(data)
+        else:
+            raise TypeError("data должен быть Client, dict или str")
 
-    # Функция для добавления первого тестового клиента в таблицу
-    def _seed_if_empty(self) -> Optional[int]:
-        """
-        Если таблица пуста - добавим одну запись, вернём её id.
-        """
-        check_sql = "SELECT COUNT(*) AS cnt FROM clients;"
-        insert_sql = """
+        # Преобразуем дату для INSERT
+        bd = self._dd_mm_yyyy_to_date(c.birth_date)
+
+        sql = """
             INSERT INTO clients
             (last_name, first_name, middle_name, passport_series, passport_number, birth_date, phone, email, address)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING id;
         """
+        params = (
+            c.last_name, c.first_name, c.middle_name,
+            c.passport_series, c.passport_number,
+            bd, c.phone, c.email, c.address
+        )
+
+        try:
+            with self._connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(sql, params)
+                new_id = cur.fetchone()["id"]
+        except psycopg2.IntegrityError as e:
+            # Ловим нарушение уникальности по паспорту
+            if getattr(e, "pgcode", None) == errorcodes.UNIQUE_VIOLATION:
+                raise ValueError(
+                    "DuplicateClient: клиент с таким паспортом уже существует"
+                ) from e
+            raise
+
+        # Возвращаем тот же объект с присвоенным id
+        c.id = new_id
+        return c
+
+
+    # Массовая загрузка из clients_clean.json
+    def import_from_clean_json(
+            self,
+            json_path: str = "clients_clean.json",
+            *,
+            replace: bool = True,
+            preserve_ids: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Импортирует клиентов из JSON-файла.
+        - replace=True: перед импортом очищает таблицу.
+        - preserve_ids=True: пытается сохранить id из файла; при конфликтах/повторах — пропускает.
+        Возвращает сводку: {total, inserted, skipped_conflict, invalid, errors}
+        """
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            raise ValueError("clean JSON должен быть массивом объектов")
+
+        summary = {
+            "total": len(data),
+            "inserted": 0,
+            "skipped_conflict": 0,
+            "invalid": 0,
+            "errors": []
+        }
+
         with self._connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(check_sql)
-            if cur.fetchone()["cnt"] > 0:
-                return None
-            cur.execute(
-                insert_sql,
-                (
-                    "Иванов", "Иван", "Петрович",
-                    "1234", "567890",
-                    date(1990, 1, 1),
-                    "+79991234567",
-                    "ivanov.i@example.ru",
-                    "г. Москва, ул. Пушкина, д. 1",
-                ),
-            )
-            new_id = cur.fetchone()["id"]
-            return new_id
+            if replace:
+                # Полная замена набора
+                cur.execute("TRUNCATE TABLE clients RESTART IDENTITY;")
+
+            for i, rec in enumerate(data):
+                # Валидация через Client
+                try:
+                    c = Client(rec)
+                except Exception as e:
+                    summary["invalid"] += 1
+                    summary["errors"].append({"index": i, "error": f"Invalid payload: {e}"})
+                    continue
+
+                # Готовим поля к вставке
+                bd = self._dd_mm_yyyy_to_date(c.birth_date)
+                vals_common = (
+                    c.last_name, c.first_name, c.middle_name,
+                    c.passport_series, c.passport_number,
+                    bd, c.phone, c.email, c.address
+                )
+
+                if preserve_ids and c.id is not None:
+                    sql = """
+                        INSERT INTO clients
+                        (id, last_name, first_name, middle_name, passport_series, passport_number, birth_date, phone, email, address)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT DO NOTHING
+                        RETURNING id;
+                    """
+                    params = (c.id,) + vals_common
+                else:
+                    sql = """
+                        INSERT INTO clients
+                        (last_name, first_name, middle_name, passport_series, passport_number, birth_date, phone, email, address)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT DO NOTHING
+                        RETURNING id;
+                    """
+                    params = vals_common
+
+                cur.execute(sql, params)
+                row = cur.fetchone()
+                if row and row.get("id") is not None:
+                    summary["inserted"] += 1
+                else:
+                    summary["skipped_conflict"] += 1
+
+            cur.execute("SELECT pg_get_serial_sequence('clients', 'id') AS seqname;")
+            seqname = cur.fetchone()["seqname"]
+            if seqname:
+                cur.execute("SELECT COALESCE(MAX(id), 0) AS mx FROM clients;")
+                max_id = cur.fetchone()["mx"]
+                cur.execute(f"SELECT setval('{seqname}', %s)", (max_id,))
+
+        return summary
 
 
 if __name__ == "__main__":
@@ -227,31 +328,55 @@ if __name__ == "__main__":
         auto_migrate=True,
     )
 
-    # если нет записи в таблице, функция ниже добавит одного клиента
-    seeded_id = repo._seed_if_empty()
-    target_id = seeded_id if seeded_id is not None else 1
+    # Заполняем таблицу клиентами из clients_clean
+    print("Импорт из clients_clean.json ...")
+    summary = repo.import_from_clean_json("clients_clean.json", replace=False, preserve_ids=True)
+    print(f"✓ Импорт завершён: total={summary['total']}, inserted={summary['inserted']}, "
+          f"skipped={summary['skipped_conflict']}, invalid={summary['invalid']}")
+    if summary["errors"]:
+        print("Ошибки валидации при импорте:")
+        for e in summary["errors"][:5]:  # только первые 5
+            print("-", e)
+
+    # Берём минимальный id для показа get_by_id
+    with repo._connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT MIN(id) AS min_id FROM clients;")
+        row = cur.fetchone()
+    target_id = row["min_id"]
 
     client_obj, errs = repo.get_by_id(target_id)
-
     if client_obj:
-        print("✓ Найден клиент:")
+        print("\n✓ Найден клиент (минимальный id):")
         print(client_obj.to_full_string())
-    else:
-        print("✗ Не найден.")
     if errs:
         print("\nЗамечания/ошибки:")
         for e in errs:
             print(f"- id={e.get('id')}: {e['error_type']}: {e['message']}")
 
-    # Пагинация: страница 1 по 3 элемента
+    # Пагинация: покажем первые 2 страницы по 3 элемента
     print("\nСтраница 1 (по 3 элемента):")
-    page = repo.get_k_n_short_list(1, 3, prefer_contact="phone")
-    for s in page:
+    for s in repo.get_k_n_short_list(1, 3, prefer_contact="phone"):
         print("-", s)
 
-    # Пагинация: страница 2 по 3 элемента
     print("\nСтраница 2 (по 3 элемента):")
-    page2 = repo.get_k_n_short_list(2, 3, prefer_contact="email")
-    for s in page2:
+    for s in repo.get_k_n_short_list(2, 3, prefer_contact="email"):
         print("-", s)
+
+    # c) Добавление нового клиента
+    print("\nДобавляем нового клиента...")
+    try:
+        added = repo.add_client({
+            "last_name": "Троевой",
+            "first_name": "Антон",
+            "middle_name": "Игоревич",
+            "passport_series": "1234",
+            "passport_number": "999000",
+            "birth_date": "15-03-1993",
+            "phone": "+79990001234",
+            "email": "anton.polevoy@example.com",
+            "address": "г. Казань, ул. Баумана, д. 5"
+        })
+        print(f"✓ Добавлен: id={added.id} — {added}")
+    except ValueError as e:
+        print(f"✗ Не удалось добавить: {e}")
 
