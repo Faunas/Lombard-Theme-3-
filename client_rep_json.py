@@ -1,99 +1,30 @@
-from typing import List, Tuple, Dict, Any, Union
-import json
+from typing import List, Dict, Any, Optional
 import os
-from client import Client
-from client_short import ClientShort
+import json
+
+from base_clients_repo import BaseClientsRepo
 
 
-class ClientsRepJson:
-    def __init__(self, path: str) -> None:
-        self.path = path
-
-    @staticmethod
-    def derive_out_path(base_path: str, suffix: str) -> str:
+class ClientsRepJson(BaseClientsRepo):
+    def derive_out_path(self, base_path: str, suffix: str) -> str:
         root, ext = os.path.splitext(base_path)
         if ext.lower() == ".json":
             return f"{root}{suffix}{ext}"
         return f"{base_path}{suffix}.json"
 
-    @staticmethod
-    def client_to_dict(c: Client) -> Dict[str, Any]:
-        return {
-            "id": c.id,
-            "last_name": c.last_name,
-            "first_name": c.first_name,
-            "middle_name": c.middle_name,
-            "passport_series": c.passport_series,
-            "passport_number": c.passport_number,
-            "birth_date": c.birth_date,
-            "phone": c.phone,
-            "email": c.email,
-            "address": c.address,
-        }
-
-    def read_array(self, path: str) -> list:
+    def _read_array(self, path: str) -> list:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, list):
             raise ValueError("JSON должен быть массивом объектов (списком).")
         return data
 
-    def read_all(self, tolerant: bool = False) -> Tuple[List[Client], List[Dict[str, Any]]]:
-        records = self.read_array(self.path)
-
-        ok: List[Client] = []
-        errors: List[Dict[str, Any]] = []
-
-        for idx, rec in enumerate(records):
-            try:
-                ok.append(Client(rec))
-            except Exception as e:
-                err = {
-                    "index": idx,
-                    "display_index": idx + 1,
-                    "id": rec.get("id", None),
-                    "error_type": type(e).__name__,
-                    "message": str(e),
-                }
-                if not tolerant:
-                    where = f"элемент #{err['display_index']}"
-                    if err["id"] is not None:
-                        where += f" (id={err['id']})"
-                    raise ValueError(f"Ошибка чтения {self.path}: {where}: {err['message']}") from e
-                errors.append(err)
-
-        return ok, errors
-
-    def write_snapshot_all_records(self, out_path: str | None = None, *, pretty: bool = True) -> str:
-        """
-        Снимок исходного файла: читаем массив целиком и сохраняем как есть (массив).
-        """
-        if out_path is None:
-            out_path = self.derive_out_path(self.path, "_snapshot")
-
-        records = self.read_array(self.path)
-        with open(out_path, "w", encoding="utf-8") as fout:
-            json.dump(records, fout, ensure_ascii=False, indent=2 if pretty else None)
-
-        return out_path
-
-    def write_all_ok(self, clients: List[Client], out_path: str | None = None, *, pretty: bool = True) -> str:
-        """
-        Пишет только валидные записи (список clients) в новый файл как массив объектов.
-        """
-        if out_path is None:
-            out_path = self.derive_out_path(self.path, "_clean")
-
-        records = [self.client_to_dict(c) for c in clients]
-        with open(out_path, "w", encoding="utf-8") as f:
+    def _write_array(self, path: str, records: list, pretty: bool) -> None:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(records, f, ensure_ascii=False, indent=2 if pretty else None)
 
-        return out_path
-
-    def write_errors(self, errors: List[Dict[str, Any]], out_path: str | None = None, *, pretty: bool = True) -> str:
-        """
-        Пишет подробный отчёт об ошибках в файл.
-        """
+    # Отчёт об ошибках в JSON
+    def write_errors(self, errors: List[Dict[str, Any]], out_path: Optional[str] = None, *, pretty: bool = True) -> str:
         if out_path is None:
             out_path = self.derive_out_path(self.path, "_errors")
         payload = {"errors": errors, "source": os.path.basename(self.path)}
@@ -101,370 +32,122 @@ class ClientsRepJson:
             json.dump(payload, f, ensure_ascii=False, indent=2 if pretty else None)
         return out_path
 
-    def render_report(self, ok: List[Client], errors: List[Dict[str, Any]], *, view: str = "short") -> str:
-        lines: List[str] = []
-        lines.append(f"Загружено клиентов: {len(ok)}; ошибок: {len(errors)}")
+if __name__ == "__main__":
+    from typing import List
 
-        if ok:
-            lines.append("Успешно загружены:")
-            if view == "full":
-                for c in ok:
-                    cid = c.id if c.id is not None else "—"
-                    lines.append(f"- id={cid}:\n{c.to_full_string()}")
-            else:
-                for c in ok:
-                    cid = c.id if c.id is not None else "—"
-                    lines.append(f"- id={cid}: {c}")
-
-        if errors:
-            lines.append("Ошибки:")
-            for e in errors:
-                hint = f"id={e['id']}" if e['id'] is not None else f"index={e['display_index']}"
-                lines.append(f"- {hint}: {e['error_type']}: {e['message']}")
-
-        return "\n".join(lines)
-
-    def get_by_id(self, target_id: int) -> Tuple[Union[Client, None], List[Dict[str, Any]]]:
-        """
-        Возвращает (Client | None, errors) по указанному id.
-        Сначала ищем в <path>_clean.json; если его нет — валидируем исходный файл в памяти и ищем среди ok.
-        """
-        if not isinstance(target_id, int):
-            raise TypeError("id должен быть целым числом")
-
-        clean_path = self.derive_out_path(self.path, "_clean")
-        errors: List[Dict[str, Any]] = []
-
-        try:
-            records = self.read_array(clean_path)
-        except FileNotFoundError:
-            ok, _ = self.read_all(tolerant=True)
-            matches = [c for c in ok if c.id == target_id]
-            if not matches:
-                errors.append({
-                    "id": target_id,
-                    "error_type": "NotFound",
-                    "message": f"Клиент с id={target_id} не найден (clean-файл отсутствует)"
-                })
-                return None, errors
-            if len(matches) > 1:
-                errors.append({
-                    "id": target_id,
-                    "error_type": "DuplicateId",
-                    "message": f"Несколько записей с id={target_id}; возвращаю первую"
-                })
-            return matches[0], errors
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Некорректный JSON в {clean_path}: {e}") from e
-
-        matches: list[dict] = []
-        for rec in records:
-            rec_id = rec.get("id", None)
-            try:
-                rec_id_norm = int(rec_id) if rec_id is not None else None
-            except Exception:
-                rec_id_norm = None
-            if rec_id_norm == target_id:
-                matches.append(rec)
-
-        if not matches:
-            errors.append({
-                "id": target_id,
-                "error_type": "NotFound",
-                "message": f"Клиент с id={target_id} не найден в валидированном наборе"
-            })
-            return None, errors
-
-        if len(matches) > 1:
-            errors.append({
-                "id": target_id,
-                "error_type": "DuplicateId",
-                "message": f"Несколько записей с id={target_id} в валидированном наборе; возвращаю первую"
-            })
-
-        return Client(matches[0]), errors
-
-    def get_k_n_short_list(self, k: int, n: int, *, prefer_contact: str = "phone") -> List[ClientShort]:
-        """
-        Возвращает страницу k размером n из валидированных записей в виде объектов ClientShort.
-        """
-        if not (isinstance(k, int) and isinstance(n, int) and k > 0 and n > 0):
-            raise ValueError("k и n должны быть положительными целыми числами")
-
-        clean_path = self.derive_out_path(self.path, "_clean")
-
-        try:
-            records = self.read_array(clean_path)
-        except FileNotFoundError:
-            ok, _ = self.read_all(tolerant=True)
-            records = [self.client_to_dict(c) for c in ok]
-
-        shorts = [ClientShort(rec, prefer_contact=prefer_contact) for rec in records]
-
-        start = (k - 1) * n
-        end = start + n
-        return shorts[start:end]
-
-    def sort_by_last_name(self, ascending: bool = True) -> List[Client]:
-        clean_path = self.derive_out_path(self.path, "_clean")
-        try:
-            records = self.read_array(clean_path)
-            clients = [Client(rec) for rec in records]
-        except FileNotFoundError:
-            clients, _ = self.read_all(tolerant=True)
-        return sorted(clients, key=lambda c: c.last_name, reverse=not ascending)
-
-    def add_client(self, data: Union[Client, dict, str], *, pretty: bool = True) -> Client:
-        try:
-            records = self.read_array(self.path)
-        except FileNotFoundError:
-            records = []
-
-        # Валидируем добавляемого и получаем полноценный Client
-        if isinstance(data, Client):
-            new_client = data
-        elif isinstance(data, (dict, str)):
-            new_client = Client(data)
-        else:
-            raise TypeError("data должен быть Client, dict или str (JSON/строка с полями)")
-
-        # Проверка дубликата по Client.__eq__ среди уже валидных записей
-        existing_ok, _ = self.read_all(tolerant=True)
-        dup_ids = [c.id for c in existing_ok if c == new_client]
-        if dup_ids:
-            raise ValueError(f"DuplicateClient: такой клиент уже существует (id={', '.join(map(str, dup_ids))})")
-
-        # Назначаем новый id = max(id) + 1 по исходному файлу
-        existing_ids: list[int] = []
-        for r in records:
-            rid = r.get("id")
-            try:
-                if rid is not None:
-                    existing_ids.append(int(rid))
-            except Exception:
-                pass
-        new_id = (max(existing_ids) if existing_ids else 0) + 1
-
-        new_client.id = new_id
-        records.append(self.client_to_dict(new_client))
-
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump(records, f, ensure_ascii=False, indent=2 if pretty else None)
-
-        print(f"✓ Добавлен клиент id={new_client.id}: {new_client}")
-
-    def replace_by_id(self, target_id: int, data: Union[Client, dict, str], *, pretty: bool = True) -> Client:
-        if not isinstance(target_id, int):
-            raise TypeError("id должен быть целым числом")
-
-        found, errs = self.get_by_id(target_id)
-        if not found:
-            msg = errs[0]["message"] if errs else f"Клиент с id={target_id} не найден"
-            raise ValueError(f"NotFound: {msg}")
-
-        if isinstance(data, Client):
-            new_client = data
-        elif isinstance(data, (dict, str)):
-            new_client = Client(data)
-        else:
-            raise TypeError("data должен быть Client, dict или str (JSON/строка с полями)")
-
-        if new_client.id is not None and new_client.id != target_id:
-            raise ValueError(f"MismatchedId: payload id={new_client.id} != target id={target_id}")
-
-        existing_ok, _ = self.read_all(tolerant=True)
-        dup_ids = [c.id for c in existing_ok if c.id != target_id and c == new_client]
-        if dup_ids:
-            raise ValueError(f"DuplicateClient: такой клиент уже существует (id={', '.join(map(str, dup_ids))})")
-
-        records = self.read_array(self.path)
-        idxs = []
-        for i, rec in enumerate(records):
-            rec_id = rec.get("id", None)
-            try:
-                rec_id_norm = int(rec_id) if rec_id is not None else None
-            except Exception:
-                rec_id_norm = None
-            if rec_id_norm == target_id:
-                idxs.append(i)
-
-        if not idxs:
-            raise ValueError(f"NotFound: id={target_id}")
-        if len(idxs) > 1:
-            raise ValueError(f"DuplicateId: найдено несколько записей с id={target_id}; обновление отменено")
-
-        new_client.id = target_id
-        records[idxs[0]] = self.client_to_dict(new_client)
-
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump(records, f, ensure_ascii=False, indent=2 if pretty else None)
-
-        print(f"\n✓ Обновлён клиент id={new_client.id}: {new_client}")
-
-
-    def delete_by_id(self, target_id: int, *, pretty: bool = True) -> Tuple[Union[Client, None], List[Dict[str, Any]]]:
-        """
-        Удаляет запись с указанным id из исходного clients.json.
-        Возвращает (удалённый Client | None, errors).
-        """
-        if not isinstance(target_id, int):
-            raise TypeError("id должен быть целым числом")
-
-        errors: List[Dict[str, Any]] = []
-
-        try:
-            records = self.read_array(self.path)
-        except FileNotFoundError:
-            errors.append({
-                "id": target_id,
-                "error_type": "NotFound",
-                "message": f"Файл {self.path} не найден"
-            })
-            return None, errors
-
-        idxs: List[int] = []
-        for i, rec in enumerate(records):
-            rec_id = rec.get("id", None)
-            try:
-                rec_id_norm = int(rec_id) if rec_id is not None else None
-            except Exception:
-                rec_id_norm = None
-            if rec_id_norm == target_id:
-                idxs.append(i)
-
-        if not idxs:
-            errors.append({
-                "id": target_id,
-                "error_type": "NotFound",
-                "message": f"Клиент с id={target_id} не найден"
-            })
-            return None, errors
-
-        if len(idxs) > 1:
-            errors.append({
-                "id": target_id,
-                "error_type": "DuplicateId",
-                "message": f"Найдено несколько записей с id={target_id}; удаление отменено"
-            })
-            return None, errors
-
-        idx = idxs[0]
-        rec = records.pop(idx)
-
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump(records, f, ensure_ascii=False, indent=2 if pretty else None)
-
-        try:
-            deleted_client = Client(rec)
-            return deleted_client, errors
-        except Exception as e:
-            errors.append({
-                "id": target_id,
-                "error_type": type(e).__name__,
-                "message": f"Удалено, но запись невалидна: {str(e)}"
-            })
-            return None, errors
-
-    def get_count(self) -> int:
-        clean_path = self.derive_out_path(self.path, "_clean")
-        try:
-            records = self.read_array(clean_path)
-            return len(records)
-        except FileNotFoundError:
-            ok, _ = self.read_all(tolerant=True)
-            return len(ok)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Некорректный JSON в {clean_path}: {e}") from e
-
-
-if __name__ == '__main__':
     repo = ClientsRepJson("clients.json")
-    clients, errs = repo.read_all(tolerant=True)
+    print("==== JSON  ====")
 
-    print(repo.render_report(clients, errs, view="short"))
+    # a) Чтение всех значений
+    ok, errs = repo.read_all(tolerant=True)
+    print(repo.render_report(ok, errs, view="short"))
 
-    snap_path = repo.write_snapshot_all_records()
-    print(f"\n✓ Снимок исходных данных: {snap_path}")
-
-    clean_path = repo.write_all_ok(clients)
-    print(f"✓ Очищенный файл с валидными клиентами: {clean_path}")
-
-    if errs:
-        err_path = repo.write_errors(errs)
-        print(f"✓ Отчёт об ошибках: {err_path}")
-
-    SEARCH_ID = 4
-    found, ferrs = repo.get_by_id(SEARCH_ID)
-
-    if found:
-        print(f"\n✓ Найден по id={SEARCH_ID}:")
-        print(found.to_full_string())
-
-    if ferrs:
-        print("\nЗамечания/ошибки при поиске:")
-        for e in ferrs:
-            hint = f"id={e.get('id')}" if e.get('id') is not None else f"index={e.get('display_index')}"
-            print(f"- {hint}: {e['error_type']}: {e['message']}")
-
+    # Бэкап исходника
     try:
-        total = len(repo.read_array(repo.derive_out_path(repo.path, "_clean")))
+        snap_path = repo.write_snapshot_all_records()
+        print(f"\n✓ Снимок исходных данных: {snap_path}")
     except FileNotFoundError:
-        total = len(repo.read_all(tolerant=True)[0])
+        print("\n! Файл clients.json не найден — пропускаю снимок исходных данных.")
 
-    elements_on_sheet = 3 # Кол-во элементов на странице
-    find_sheet_number = 1 # Страница
+    # b) Запись всех валидных значений в _clean
+    clean_path = repo.write_all_ok(ok)
+    print(f"✓ Очищенный файл (валидные записи): {clean_path}")
 
+    # Запишем ошибки
+    if errs:
+        try:
+            err_path = repo.write_errors(errs)
+            print(f"✓ Отчёт об ошибках: {err_path}")
+        except Exception as e:
+            print(f"! Не удалось записать отчёт об ошибках: {e}")
+
+    # i) get_count
+    count_before = repo.get_count()
+    print(f"\n✓ Количество элементов (get_count): {count_before}")
+
+    # Если данных нет — добавить тестового клиента, чтобы проверить остальные операции
+    if not ok:
+        seed = repo.add_client({
+            "last_name": "ТестовJSON",
+            "first_name": "Иван",
+            "middle_name": "Иванович",
+            "passport_series": "1234",
+            "passport_number": "567890",
+            "birth_date": "01-01-1990",
+            "phone": "+79990000001",
+            "email": "json.seed.user@example.com",
+            "address": "г. Москва, ул. Демонстрационная, д. 1"
+        })
+        print(f"✓ Добавлен тестовый клиент (seed) id={seed.id}")
+        ok, errs = repo.read_all(tolerant=True)
+
+    # c) Получить объект по ID
+    search_id = ok[0].id if ok and ok[0].id is not None else 1
+    found, ferrs = repo.get_by_id(search_id)
+    print(f"\nПоиск по id={search_id}:")
+    if found:
+        print(found.to_full_string())
+    if ferrs:
+        for e in ferrs:
+            print(f"- id={e.get('id')}: {e['error_type']}: {e['message']}")
+
+    # d) get_k_n_short_list (листалка)
+    elements_on_sheet = 3
+    total = repo.get_count()
     total_pages = (total + elements_on_sheet - 1) // elements_on_sheet
-
-    print("\nВсего элементов:", total, "Всего страниц:", total_pages)
-
+    find_sheet_number = 1
+    print(f"\nВсего элементов: {total}; страниц по {elements_on_sheet}: {total_pages}")
     page = repo.get_k_n_short_list(find_sheet_number, elements_on_sheet)
-    print(f"Страница {find_sheet_number} по {elements_on_sheet} элемента (short):")
+    print(f"Страница {find_sheet_number} (по {elements_on_sheet} элемента):")
     for s in page:
         print("-", s)
 
-    print("\nОтсортировано по фамилии (ASC):")
-    for c in repo.sort_by_last_name(ascending=True):
+    # e) Сортировка
+    print("\nСортировка по фамилии (ASC) — первые 5:")
+    for c in repo.sort_by_last_name(ascending=True)[:5]:
+        print("-", c)
+    print("\nСортировка по фамилии (DESC) — первые 5:")
+    for c in repo.sort_by_last_name(ascending=False)[:5]:
         print("-", c)
 
-    print("\nОтсортировано по фамилии (DESC):")
-    for c in repo.sort_by_last_name(ascending=False):
-        print("-", c)
+    # f) Добавление нового клиента
+    added = repo.add_client({
+        "last_name": "НовиковJSON",
+        "first_name": "Никита",
+        "middle_name": "Сергеевич",
+        "passport_series": "8888",
+        "passport_number": "112233",
+        "birth_date": "05-05-1995",
+        "phone": "+79995551122",
+        "email": "novikov.json@example.com",
+        "address": "г. Самара, ул. Молодогвардейская, д. 10"
+    })
+    print(f"\n✓ Добавлен клиент id={added.id}: {added}")
 
-    # added = repo.add_client({
-    #     "last_name": "Новиков",
-    #     "first_name": "Никита",
-    #     "middle_name": "Сергеевич",
-    #     "passport_series": "8888",
-    #     "passport_number": "112233",
-    #     "birth_date": "05-05-1995",
-    #     "phone": "+79995551122",
-    #     "email": "novikov.nikita@gmail.com",
-    #     "address": "г. Самара, ул. Молодогвардейская, д. 10"
-    # })
-
-    updated = repo.replace_by_id(7, {
-        "last_name": "Романов",
+    # g) Замена элемента по ID
+    updated = repo.replace_by_id(added.id, {
+        "last_name": "РомановJSON",
         "first_name": "Роман",
         "middle_name": "Сергеевич",
         "passport_series": "5555",
         "passport_number": "666777",
         "birth_date": "20-07-1988",
-        "phone": "89997654321",
-        "email": "romanov.r.updated@gmail.com",
+        "phone": "+79997654321",
+        "email": "romanov.json.updated@example.com",
         "address": "г. Нижний Новгород, ул. Большая Покровская, д. 12"
     })
+    print(f"✓ Обновлён клиент id={updated.id}: {updated}")
 
-    DEL_ID = 4
-    deleted, derrs = repo.delete_by_id(DEL_ID)
+    # h) Удаление по ID
+    deleted, derrs = repo.delete_by_id(updated.id)
     if deleted:
-        print(f"\n✓ Удалён клиент id={DEL_ID}: {deleted}")
+        print(f"✓ Удалён клиент id={updated.id}: {deleted}")
     else:
-        print(f"\n✗ Удаление id={DEL_ID}:")
+        print("✗ Ошибки при удалении:")
     for e in derrs:
         hint = f"id={e.get('id')}" if e.get('id') is not None else f"index={e.get('display_index')}"
         print(f"- {hint}: {e['error_type']}: {e['message']}")
 
-    count_valid = repo.get_count()
-    print(f"\nВсего валидных клиентов: {count_valid}")
-
+    # i) get_count после всего
+    count_after = repo.get_count()
+    print(f"\n✓ Количество элементов после операций (get_count): {count_after}")

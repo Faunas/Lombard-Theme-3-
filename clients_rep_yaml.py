@@ -1,37 +1,18 @@
-from typing import List, Tuple, Dict, Any, Union
+from typing import List, Dict, Any, Optional
 import os
 import yaml
-from client import Client
-from client_short import ClientShort
+
+from base_clients_repo import BaseClientsRepo
 
 
-class ClientsRepYaml:
-    def __init__(self, path: str) -> None:
-        self.path = path
-
-    @staticmethod
-    def derive_out_path(base_path: str, suffix: str) -> str:
+class ClientsRepYaml(BaseClientsRepo):
+    def derive_out_path(self, base_path: str, suffix: str) -> str:
         root, ext = os.path.splitext(base_path)
         if ext.lower() in (".yaml", ".yml"):
             return f"{root}{suffix}{ext}"
         return f"{base_path}{suffix}.yaml"
 
-    @staticmethod
-    def client_to_dict(c: Client) -> Dict[str, Any]:
-        return {
-            "id": c.id,
-            "last_name": c.last_name,
-            "first_name": c.first_name,
-            "middle_name": c.middle_name,
-            "passport_series": c.passport_series,
-            "passport_number": c.passport_number,
-            "birth_date": c.birth_date,
-            "phone": c.phone,
-            "email": c.email,
-            "address": c.address,
-        }
-
-    def read_array(self, path: str) -> list:
+    def _read_array(self, path: str) -> list:
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         if data is None:
@@ -40,383 +21,150 @@ class ClientsRepYaml:
             raise ValueError("YAML должен быть массивом объектов (списком).")
         return data
 
-    def read_all(self, tolerant: bool = False) -> Tuple[List[Client], List[Dict[str, Any]]]:
-        try:
-            records = self.read_array(self.path)
-        except FileNotFoundError:
-            records = []
+    def _write_array(self, path: str, records: list, pretty: bool) -> None:
+        with open(path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(
+                records,
+                f,
+                allow_unicode=True,
+                sort_keys=False,
+                indent=2,
+                default_flow_style=not pretty
+            )
 
-        ok: List[Client] = []
-        errors: List[Dict[str, Any]] = []
-
-        for idx, rec in enumerate(records):
-            try:
-                ok.append(Client(rec))
-            except Exception as e:
-                err = {
-                    "index": idx,
-                    "display_index": idx + 1,
-                    "id": (rec or {}).get("id", None) if isinstance(rec, dict) else None,
-                    "error_type": type(e).__name__,
-                    "message": str(e),
-                }
-                if not tolerant:
-                    where = f"элемент #{err['display_index']}"
-                    if err["id"] is not None:
-                        where += f" (id={err['id']})"
-                    raise ValueError(f"Ошибка чтения {self.path}: {where}: {err['message']}") from e
-                errors.append(err)
-
-        return ok, errors
-
-    def write_all_ok(self, clients: List[Client], out_path: str | None = None, *, pretty: bool = True) -> str:
-        """
-        Пишет только валидные записи (список clients) в новый YAML-файл как массив объектов.
-        """
+    # Отчёт об ошибках в YAML
+    def write_errors(self, errors: List[Dict[str, Any]], out_path: Optional[str] = None, *, pretty: bool = True) -> str:
         if out_path is None:
-            out_path = self.derive_out_path(self.path, "_clean")
-
-        records = [self.client_to_dict(c) for c in clients]
-
+            out_path = self.derive_out_path(self.path, "_errors")
+        payload = {"errors": errors, "source": os.path.basename(self.path)}
         with open(out_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(
-                records,
+                payload,
                 f,
                 allow_unicode=True,
                 sort_keys=False,
                 indent=2,
                 default_flow_style=not pretty
             )
-
         return out_path
-
-    def get_by_id(self, target_id: int) -> Tuple[Union[Client, None], List[Dict[str, Any]]]:
-        """
-        Возвращает (Client | None, errors) по указанному id.
-        """
-        if not isinstance(target_id, int):
-            raise TypeError("id должен быть целым числом")
-
-        clean_path = self.derive_out_path(self.path, "_clean")
-        errors: List[Dict[str, Any]] = []
-
-        try:
-            records = self.read_array(clean_path)
-        except FileNotFoundError:
-            ok, _ = self.read_all(tolerant=True)
-            matches = [c for c in ok if c.id == target_id]
-            if not matches:
-                errors.append({
-                    "id": target_id,
-                    "error_type": "NotFound",
-                    "message": f"Клиент с id={target_id} не найден (clean-файл отсутствует)"
-                })
-                return None, errors
-            if len(matches) > 1:
-                errors.append({
-                    "id": target_id,
-                    "error_type": "DuplicateId",
-                    "message": f"Несколько записей с id={target_id}; возвращаю первую"
-                })
-            return matches[0], errors
-        except yaml.YAMLError as e:
-            raise ValueError(f"Некорректный YAML в {clean_path}: {e}") from e
-
-        matches: list[dict] = []
-        for rec in records:
-            rec_id = rec.get("id", None)
-            try:
-                rec_id_norm = int(rec_id) if rec_id is not None else None
-            except Exception:
-                rec_id_norm = None
-            if rec_id_norm == target_id:
-                matches.append(rec)
-
-        if not matches:
-            errors.append({
-                "id": target_id,
-                "error_type": "NotFound",
-                "message": f"Клиент с id={target_id} не найден в валидированном наборе"
-            })
-            return None, errors
-
-        if len(matches) > 1:
-            errors.append({
-                "id": target_id,
-                "error_type": "DuplicateId",
-                "message": f"Несколько записей с id={target_id} в валидированном наборе; возвращаю первую"
-            })
-
-        return Client(matches[0]), errors
-
-    def get_k_n_short_list(self, k: int, n: int, *, prefer_contact: str = "phone") -> List[ClientShort]:
-        """
-        Возвращает страницу k размером n из валидированных записей в виде объектов ClientShort.
-        """
-        if not (isinstance(k, int) and isinstance(n, int) and k > 0 and n > 0):
-            raise ValueError("k и n должны быть положительными целыми числами")
-
-        clean_path = self.derive_out_path(self.path, "_clean")
-
-        try:
-            records = self.read_array(clean_path)
-        except FileNotFoundError:
-            ok, _ = self.read_all(tolerant=True)
-            records = [self.client_to_dict(c) for c in ok]
-
-        shorts = [ClientShort(rec, prefer_contact=prefer_contact) for rec in records]
-
-        start = (k - 1) * n
-        end = start + n
-        return shorts[start:end]
-
-    def sort_by_last_name(self, ascending: bool = True) -> List[Client]:
-        clean_path = self.derive_out_path(self.path, "_clean")
-        try:
-            records = self.read_array(clean_path)
-            clients = [Client(rec) for rec in records]
-        except FileNotFoundError:
-            clients, _ = self.read_all(tolerant=True)
-        return sorted(clients, key=lambda c: c.last_name, reverse=not ascending)
-
-    def add_client(self, data: Union[Client, dict, str], *, pretty: bool = True) -> Client:
-        try:
-            records = self.read_array(self.path)
-        except FileNotFoundError:
-            records = []
-
-        if isinstance(data, Client):
-            new_client = data
-        elif isinstance(data, (dict, str)):
-            new_client = Client(data)
-        else:
-            raise TypeError("data должен быть Client, dict или str (JSON/строка с полями)")
-
-        existing_ok, _ = self.read_all(tolerant=True)
-        dup_ids = [c.id for c in existing_ok if c == new_client]
-        if dup_ids:
-            raise ValueError(f"DuplicateClient: такой клиент уже существует (id={', '.join(map(str, dup_ids))})")
-
-        existing_ids: list[int] = []
-        for r in records:
-            rid = (r or {}).get("id")
-            try:
-                if rid is not None:
-                    existing_ids.append(int(rid))
-            except Exception:
-                pass
-        new_id = (max(existing_ids) if existing_ids else 0) + 1
-
-        new_client.id = new_id
-        records.append(self.client_to_dict(new_client))
-
-        with open(self.path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(
-                records,
-                f,
-                allow_unicode=True,
-                sort_keys=False,
-                indent=2,
-                default_flow_style=not pretty
-            )
-
-        print(f"✓ Добавлен клиент id={new_client.id}: {new_client}")
-        return new_client
-
-    def replace_by_id(self, target_id: int, data: Union[Client, dict, str], *, pretty: bool = True) -> Client:
-        if not isinstance(target_id, int):
-            raise TypeError("id должен быть целым числом")
-
-        found, errs = self.get_by_id(target_id)
-        if not found:
-            msg = errs[0]["message"] if errs else f"Клиент с id={target_id} не найден"
-            raise ValueError(f"NotFound: {msg}")
-
-        if isinstance(data, Client):
-            new_client = data
-        elif isinstance(data, (dict, str)):
-            new_client = Client(data)
-        else:
-            raise TypeError("data должен быть Client, dict или str (JSON/строка с полями)")
-
-        if new_client.id is not None and new_client.id != target_id:
-            raise ValueError(f"MismatchedId: payload id={new_client.id} != target id={target_id}")
-
-        existing_ok, _ = self.read_all(tolerant=True)
-        dup_ids = [c.id for c in existing_ok if c.id != target_id and c == new_client]
-        if dup_ids:
-            raise ValueError(f"DuplicateClient: такой клиент уже существует (id={', '.join(map(str, dup_ids))})")
-
-        records = self.read_array(self.path)
-        idxs: List[int] = []
-        for i, rec in enumerate(records):
-            rec_id = (rec or {}).get("id", None)
-            try:
-                rec_id_norm = int(rec_id) if rec_id is not None else None
-            except Exception:
-                rec_id_norm = None
-            if rec_id_norm == target_id:
-                idxs.append(i)
-
-        if not idxs:
-            raise ValueError(f"NotFound: id={target_id}")
-        if len(idxs) > 1:
-            raise ValueError(f"DuplicateId: найдено несколько записей с id={target_id}; обновление отменено")
-
-        new_client.id = target_id
-        records[idxs[0]] = self.client_to_dict(new_client)
-
-        with open(self.path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(
-                records,
-                f,
-                allow_unicode=True,
-                sort_keys=False,
-                indent=2,
-                default_flow_style=not pretty
-            )
-
-        print(f"\n✓ Обновлён клиент id={new_client.id}: {new_client}")
-        return new_client
-
-    def delete_by_id(self, target_id: int, *, pretty: bool = True) -> Tuple[Union[Client, None], List[Dict[str, Any]]]:
-        """
-        Удаляет запись с указанным id из исходного YAML-файла.
-        Возвращает (удалённый Client | None, errors).
-        """
-        if not isinstance(target_id, int):
-            raise TypeError("id должен быть целым числом")
-
-        errors: List[Dict[str, Any]] = []
-
-        try:
-            records = self.read_array(self.path)
-        except FileNotFoundError:
-            errors.append({
-                "id": target_id,
-                "error_type": "NotFound",
-                "message": f"Файл {self.path} не найден"
-            })
-            return None, errors
-
-        idxs: List[int] = []
-        for i, rec in enumerate(records):
-            rec_id = (rec or {}).get("id", None)
-            try:
-                rec_id_norm = int(rec_id) if rec_id is not None else None
-            except Exception:
-                rec_id_norm = None
-            if rec_id_norm == target_id:
-                idxs.append(i)
-
-        if not idxs:
-            errors.append({
-                "id": target_id,
-                "error_type": "NotFound",
-                "message": f"Клиент с id={target_id} не найден"
-            })
-            return None, errors
-
-        if len(idxs) > 1:
-            errors.append({
-                "id": target_id,
-                "error_type": "DuplicateId",
-                "message": f"Найдено несколько записей с id={target_id}; удаление отменено"
-            })
-            return None, errors
-
-        idx = idxs[0]
-        rec = records.pop(idx)
-
-        with open(self.path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(
-                records,
-                f,
-                allow_unicode=True,
-                sort_keys=False,
-                indent=2,
-                default_flow_style=not pretty
-            )
-
-        try:
-            deleted_client = Client(rec)
-            return deleted_client, errors
-        except Exception as e:
-            errors.append({
-                "id": target_id,
-                "error_type": type(e).__name__,
-                "message": f"Удалено, но запись невалидна: {str(e)}"
-            })
-            return None, errors
-
-    def get_count(self) -> int:
-        """
-        Возвращает количество элементов
-        """
-        clean_path = self.derive_out_path(self.path, "_clean")
-        try:
-            return len(self.read_array(clean_path))
-        except FileNotFoundError:
-            return len(self.read_all(tolerant=True)[0])
 
 
 if __name__ == "__main__":
+    from typing import List
+
     repo = ClientsRepYaml("clients.yaml")
-    clients, errs = repo.read_all(tolerant=True)
-    print(f"Загружено клиентов: {len(clients)}; ошибок: {len(errs)}")
+    print("==== YAML ====")
 
-    out_file = repo.write_all_ok(clients)
-    print(f"✓ Записано валидных записей в: {out_file}")
+    # a) Чтение всех значений
+    ok, errs = repo.read_all(tolerant=True)
+    print(repo.render_report(ok, errs, view="short"))
 
-    # Пример получения страницы 1 по 3 элемента
-    page = repo.get_k_n_short_list(1, 3)
-    print("\nСтраница 1 по 3 элемента (short):")
+    # Бэкап исходника
+    try:
+        snap_path = repo.write_snapshot_all_records()
+        print(f"\n✓ Снимок исходных данных: {snap_path}")
+    except FileNotFoundError:
+        print("\n! Файл clients.yaml не найден — пропускаю снимок исходных данных.")
+
+    # b) Запись всех валидных значений в _clean
+    clean_path = repo.write_all_ok(ok)
+    print(f"✓ Очищенный файл (валидные записи): {clean_path}")
+
+    # Запишем ошибки
+    if errs:
+        try:
+            err_path = repo.write_errors(errs)
+            print(f"✓ Отчёт об ошибках: {err_path}")
+        except Exception as e:
+            print(f"! Не удалось записать отчёт об ошибках: {e}")
+
+    # i) get_count
+    count_before = repo.get_count()
+    print(f"\n✓ Количество элементов (get_count): {count_before}")
+
+    # Если данных нет — добавить тестового клиента, чтобы проверить остальные операции
+    if not ok:
+        seed = repo.add_client({
+            "last_name": "ТестовYAML",
+            "first_name": "Иван",
+            "middle_name": "Иванович",
+            "passport_series": "1234",
+            "passport_number": "567890",
+            "birth_date": "01-01-1990",
+            "phone": "+79990000002",
+            "email": "yaml.seed.user@example.com",
+            "address": "г. Санкт-Петербург, ул. Демонстрационная, д. 2"
+        })
+        print(f"✓ Добавлен тестовый клиент (seed) id={seed.id}")
+        ok, errs = repo.read_all(tolerant=True)
+
+    # c) Получить объект по ID
+    search_id = ok[0].id if ok and ok[0].id is not None else 1
+    found, ferrs = repo.get_by_id(search_id)
+    print(f"\nПоиск по id={search_id}:")
+    if found:
+        print(found.to_full_string())
+    if ferrs:
+        for e in ferrs:
+            print(f"- id={e.get('id')}: {e['error_type']}: {e['message']}")
+
+    # d) get_k_n_short_list (листалка)
+    elements_on_sheet = 3
+    total = repo.get_count()
+    total_pages = (total + elements_on_sheet - 1) // elements_on_sheet
+    find_sheet_number = 1
+    print(f"\nВсего элементов: {total}; страниц по {elements_on_sheet}: {total_pages}")
+    page = repo.get_k_n_short_list(find_sheet_number, elements_on_sheet)
+    print(f"Страница {find_sheet_number} (по {elements_on_sheet} элемента):")
     for s in page:
         print("-", s)
 
-    print("\nОтсортировано по фамилии (ASC):")
-    for c in repo.sort_by_last_name(ascending=True):
+    # e) Сортировка
+    print("\nСортировка по фамилии (ASC) — первые 5:")
+    for c in repo.sort_by_last_name(ascending=True)[:5]:
+        print("-", c)
+    print("\nСортировка по фамилии (DESC) — первые 5:")
+    for c in repo.sort_by_last_name(ascending=False)[:5]:
         print("-", c)
 
-    print("\nОтсортировано по фамилии (DESC):")
-    for c in repo.sort_by_last_name(ascending=False):
-        print("-", c)
+    # f) Добавление нового клиента
+    added = repo.add_client({
+        "last_name": "НовиковYAMLтесто",
+        "first_name": "Никита",
+        "middle_name": "Сергеевич",
+        "passport_series": "8888",
+        "passport_number": "112233",
+        "birth_date": "05-05-1995",
+        "phone": "+79995551123",
+        "email": "novikov.yaml@example.com",
+        "address": "г. Самара, ул. Молодогвардейская, д. 10"
+    })
+    print(f"\n✓ Добавлен клиент id={added.id}: {added}")
 
-    # added = repo.add_client({
-    #     "last_name": "РЛобыкин",
-    #     "first_name": "Никита",
-    #     "middle_name": "Сергеевич",
-    #     "passport_series": "8888",
-    #     "passport_number": "112233",
-    #     "birth_date": "05-05-1995",
-    #     "phone": "+79995551122",
-    #     "email": "novikov.nikita@gmail.com",
-    #     "address": "г. Самара, ул. Молодогвардейская, д. 10"
-    # })
-    # print(f"Итог: добавлен id={added.id}")
+    # g) Замена элемента по ID
+    updated = repo.replace_by_id(added.id, {
+        "last_name": "РомановYAML",
+        "first_name": "Роман",
+        "middle_name": "Сергеевич",
+        "passport_series": "5555",
+        "passport_number": "666777",
+        "birth_date": "20-07-1988",
+        "phone": "+79997654322",
+        "email": "romanov.yaml.updated@example.com",
+        "address": "г. Нижний Новгород, ул. Большая Покровская, д. 12"
+    })
+    print(f"✓ Обновлён клиент id={updated.id}: {updated}")
 
-    # updated = repo.replace_by_id(4, {
-    #     "last_name": "Романов",
-    #     "first_name": "Роман",
-    #     "middle_name": "Сергеевич",
-    #     "passport_series": "5555",
-    #     "passport_number": "666777",
-    #     "birth_date": "20-07-1988",
-    #     "phone": "89997654321",
-    #     "email": "romanov.r.updated@gmail.com",
-    #     "address": "г. Нижний Новгород, ул. Большая Покровская, д. 12"
-    # })
+    # h) Удаление по ID
+    deleted, derrs = repo.delete_by_id(updated.id)
+    if deleted:
+        print(f"✓ Удалён клиент id={updated.id}: {deleted}")
+    else:
+        print("✗ Ошибки при удалении:")
+    for e in derrs:
+        hint = f"id={e.get('id')}" if e.get('id') is not None else f"index={e.get('display_index')}"
+        print(f"- {hint}: {e['error_type']}: {e['message']}")
 
-    # DEL_ID = 7
-    # deleted, derrs = repo.delete_by_id(DEL_ID)
-    # if deleted:
-    #     print(f"\n✓ Удалён клиент id={DEL_ID}: {deleted}")
-    # else:
-    #     print(f"\n✗ Удаление id={DEL_ID}:")
-    # for e in derrs:
-    #     hint = f"id={e.get('id')}" if e.get('id') is not None else f"index={e.get('display_index')}"
-    #     print(f"- {hint}: {e['error_type']}: {e['message']}")
-
-    cnt = repo.get_count()
-    print(f"✓ Всего элементов: {cnt}")
-
+    # i) get_count после всего
+    count_after = repo.get_count()
+    print(f"\n✓ Количество элементов после операций (get_count): {count_after}")
