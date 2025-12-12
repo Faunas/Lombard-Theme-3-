@@ -1,0 +1,24 @@
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "N"]
+ignore = [
+  "E501",  # длину строк отдаём Black
+  "N817",  # CamelCase imported as acronym (Validator as V) — оставляем как есть
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["clientsrep"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+pretty = true
+show_error_codes = true

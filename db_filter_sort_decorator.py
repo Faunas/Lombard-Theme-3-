@@ -1,42 +1,39 @@
 from dataclasses import dataclass
-from typing import Optional, List, Tuple, Dict, Any
+from datetime import date, datetime
+from typing import Any
 
-from datetime import datetime, date
-
-from db_singleton import PgDB
 from client_short import ClientShort
-
 from clients_rep_db_adapter import ClientsRepDBAdapter
+from db_singleton import PgDB
+
 
 @dataclass
 class ClientFilter:
-    last_name_substr: Optional[str] = None
-    first_name_substr: Optional[str] = None
-    middle_name_substr: Optional[str] = None
-    phone_substr: Optional[str] = None
-    email_substr: Optional[str] = None
+    last_name_substr: str | None = None
+    first_name_substr: str | None = None
+    middle_name_substr: str | None = None
+    phone_substr: str | None = None
+    email_substr: str | None = None
 
     # точные совпадения (паспорт)
-    passport_series: Optional[str] = None  # "1234"
-    passport_number: Optional[str] = None  # "567890"
+    passport_series: str | None = None  # "1234"
+    passport_number: str | None = None  # "567890"
 
     # диапазон дат рождения (dd-mm-YYYY)
-    birth_date_from: Optional[str] = None
-    birth_date_to: Optional[str] = None
+    birth_date_from: str | None = None
+    birth_date_to: str | None = None
 
 
 @dataclass
 class SortSpec:
-    by: str = "id"       # id | last_name | birth_date (строго из белого списка)
+    by: str = "id"  # id | last_name | birth_date (строго из белого списка)
     asc: bool = True
 
-
-# -------- Декоратор над DB-репозиторием --------
 
 class ClientsRepDBFilterSortDecorator:
     """
     Декоратор, добавляющий фильтрацию и сортировку к методам get_k_n_short_list и get_count
-    для класса работы с БД (используем PgDB Singleton).
+    для работы с БД (через PgDB Singleton). Поддерживает совместимость с адаптером.
     """
 
     _ALLOWED_SORT = {
@@ -47,33 +44,33 @@ class ClientsRepDBFilterSortDecorator:
 
     def __init__(self, base_db_repo: Any = None) -> None:
         """
-        base_db_repo — "декорируемый" объект (ClientsRepDBAdapter),
-        чтобы соответствовать паттерну Декоратор. Здесь мы его не используем напрямую,
-        так как строим SQL сами, но держим ссылку для совместимости.
+        base_db_repo — «декорируемый» объект (ClientsRepDBAdapter). Мы храним ссылку
+        для совместимости паттерна Декоратор, но выполняем SQL напрямую.
         """
         self._base = base_db_repo
-        # проверим, что Singleton инициализирован раньше, иначе
-        # PgDB.get() бросит исключение в первом вызове
-        # (осознанно нет PgDB.get(), чтобы не падать в конструкторе)
+
+    # --- утилиты преобразования дат ---
 
     @staticmethod
-    def _to_date(s: Optional[str]) -> Optional[date]:
+    def _to_date(s: str | None) -> date | None:
         if not s:
             return None
         return datetime.strptime(s, "%d-%m-%Y").date()
 
     @staticmethod
-    def _date_to_dd_mm_yyyy(d: Optional[date]) -> Optional[str]:
+    def _date_to_dd_mm_yyyy(d: date | None) -> str | None:
         return d.strftime("%d-%m-%Y") if d else None
 
-    def _build_where(self, flt: Optional[ClientFilter]) -> Tuple[str, List[Any]]:
+    # --- построение SQL фрагментов ---
+
+    def _build_where(self, flt: ClientFilter | None) -> tuple[str, list[Any]]:
         if not flt:
             return "", []
 
-        conds: List[str] = []
-        params: List[Any] = []
+        conds: list[str] = []
+        params: list[Any] = []
 
-        def add_ilike(col: str, value: Optional[str]):
+        def add_ilike(col: str, value: str | None) -> None:
             if value:
                 conds.append(f"{col} ILIKE %s")
                 params.append(f"%{value}%")
@@ -84,7 +81,7 @@ class ClientsRepDBFilterSortDecorator:
         add_ilike("phone", flt.phone_substr)
         add_ilike("email", flt.email_substr)
 
-        # Точные по паспорту
+        # точные по паспорту
         if flt.passport_series:
             conds.append("TRIM(passport_series) = %s")
             params.append(flt.passport_series)
@@ -92,7 +89,7 @@ class ClientsRepDBFilterSortDecorator:
             conds.append("TRIM(passport_number) = %s")
             params.append(flt.passport_number)
 
-        # Диапазон дат
+        # диапазон дат
         d_from = self._to_date(flt.birth_date_from)
         d_to = self._to_date(flt.birth_date_to)
 
@@ -111,24 +108,24 @@ class ClientsRepDBFilterSortDecorator:
 
         return "WHERE " + " AND ".join(conds), params
 
-    def _build_order_by(self, sort: Optional[SortSpec]) -> str:
+    def _build_order_by(self, sort: SortSpec | None) -> str:
         if not sort:
             return "ORDER BY id ASC"
         col = self._ALLOWED_SORT.get((sort.by or "").lower(), "id")
         direction = "ASC" if sort.asc else "DESC"
         return f"ORDER BY {col} {direction}"
 
-    # Ниже два метода по заданию.
+    # --- публичные методы по заданию ---
 
-    def get_k_n_short_list(
+    def get_k_n_short_list(  # noqa: A003  (метод допускает имя из задания)
         self,
         k: int,
         n: int,
         *,
-        filter: Optional[ClientFilter] = None,
-        sort: Optional[SortSpec] = None,
+        filter: ClientFilter | None = None,  # noqa: A001  (перекрывает builtin)
+        sort: SortSpec | None = None,
         prefer_contact: str = "phone",
-    ) -> List[ClientShort]:
+    ) -> list[ClientShort]:
         """
         Возвращает страницу k (1..), размером n с учётом фильтра и сортировки.
         """
@@ -159,7 +156,7 @@ class ClientsRepDBFilterSortDecorator:
         """
         rows = db.fetch_all(sql, params + [n, offset])
 
-        out: List[ClientShort] = []
+        out: list[ClientShort] = []
         for r in rows:
             payload = {
                 "id": r["id"],
@@ -175,12 +172,11 @@ class ClientsRepDBFilterSortDecorator:
             out.append(ClientShort(payload, prefer_contact=prefer_contact))
         return out
 
-    def get_count(self, *, filter: Optional[ClientFilter] = None) -> int:
+    def get_count(self, *, filter: ClientFilter | None = None) -> int:  # noqa: A001
         """
         Считает количество записей по тому же фильтру.
         """
         db = PgDB.get()
-
         where_sql, params = self._build_where(filter)
         sql = f"SELECT COUNT(*) AS cnt FROM clients {where_sql};"
         row = db.fetch_one(sql, params)
@@ -197,10 +193,10 @@ if __name__ == "__main__":
         password="123",
     )
 
-    # 2) создаём базовый адаптер
-    base = ClientsRepDBAdapter() if ClientsRepDBAdapter else None
+    # 2) создаём базовый адаптер (для совместимости концепции декоратора)
+    base = ClientsRepDBAdapter()
 
-    # 3) Оборачиваем в декоратор с фильтрацией/сортировкой
+    # 3) оборачиваем в декоратор с фильтрацией/сортировкой
     repo = ClientsRepDBFilterSortDecorator(base)
 
     # Примеры фильтров/сортировок
@@ -216,14 +212,14 @@ if __name__ == "__main__":
     flt2 = ClientFilter(birth_date_from="01-01-1980", birth_date_to="31-12-2000")
     sort2 = SortSpec(by="birth_date", asc=False)
 
-    print("\n== Пример 2: По дате рождения 1980..2000, сортировка по birth_date DESC ==")
+    print("\n== Пример 2: ДР 1980..2000, сортировка по birth_date DESC ==")
     page2 = repo.get_k_n_short_list(1, 5, filter=flt2, sort=sort2)
     for s in page2:
         print("-", s)
     print("count:", repo.get_count(filter=flt2))
 
-    flt3 = ClientFilter(passport_series="1234")  # точное совпадение по серии
-    print("\n== Пример 3: Точная серия паспорта 1234, сортировка по id ASC (по умолчанию) ==")
+    flt3 = ClientFilter(passport_series="1234")  # точная серия паспорта
+    print("\n== Пример 3: Серия паспорта 1234, сортировка по id ASC ==")
     page3 = repo.get_k_n_short_list(1, 10, filter=flt3)
     for s in page3:
         print("-", s)

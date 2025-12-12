@@ -1,5 +1,5 @@
-from datetime import date
 import re
+from datetime import date
 
 
 class Validator:
@@ -20,7 +20,9 @@ class Validator:
         """Только буквы. Без пробелов, дефисов и всякой фигни."""
         v = Validator.require_non_empty(field, value)
         if not all(ch.isalpha() for ch in v):
-            raise ValueError(f"Поле '{field}' может содержать только буквы (без пробелов и символов).")
+            raise ValueError(
+                f"Поле '{field}' может содержать только буквы (без пробелов и символов)."
+            )
         return v
 
     @staticmethod
@@ -28,7 +30,9 @@ class Validator:
         """Убеждаемся что в серии паспорта только 4 символа и эти символы являются цифрами."""
         v = Validator.require_non_empty("passport_series", value).replace(" ", "")
         if not (len(v) == 4 and v.isdigit()):
-            raise ValueError("Поле 'passport_series' должно содержать ровно 4 цифры (например, '1234').")
+            raise ValueError(
+                "Поле 'passport_series' должно содержать ровно 4 цифры (например, '1234')."
+            )
         return v
 
     @staticmethod
@@ -36,7 +40,9 @@ class Validator:
         """Убеждаемся что в номере паспорта только 6 символов и эти символы являются цифрами."""
         v = Validator.require_non_empty("passport_number", value).replace(" ", "")
         if not (len(v) == 6 and v.isdigit()):
-            raise ValueError("Поле 'passport_number' должно содержать ровно 6 цифр (например, '567890').")
+            raise ValueError(
+                "Поле 'passport_number' должно содержать ровно 6 цифр (например, '567890')."
+            )
         return v
 
     @staticmethod
@@ -47,12 +53,16 @@ class Validator:
         v = Validator.require_non_empty("birth_date", value)
         # Убеждаемся что формат день-месяц-год
         if not re.fullmatch(r"\d{2}-\d{2}-\d{4}", v):
-            raise ValueError("Поле 'birth_date' должно быть в формате 'ДД-ММ-ГГГГ', например '01-01-1990'.")
+            raise ValueError(
+                "Поле 'birth_date' должно быть в формате 'ДД-ММ-ГГГГ', например '01-01-1990'."
+            )
         # Получаем дату от пользователя
         dd, mm, yyyy = map(int, v.split("-"))
         # Проверяем, а существует ли такая дата вообще?
         try:
-            d = date(yyyy, mm, dd)  # Если даты нет, то выбросит ValueError. Например, для 31-02-1990.
+            d = date(
+                yyyy, mm, dd
+            )  # Если даты нет, то выбросит ValueError. Например, для 31-02-1990.
         except ValueError:
             raise ValueError(f"Поле 'birth_date' содержит несуществующую дату: {v}.") from None
         # Проверяю, чтобы дата была не в будущем. (Заключаем договора всё-таки)
@@ -68,8 +78,8 @@ class Validator:
     @staticmethod
     def phone_ru_strict(value: str) -> str:
         """Разрешаем только два формата (после очистки скобок/пробелов/дефисов):
-           1) +7XXXXXXXXXX (ровно 10 цифр после +7)
-           2) 89XXXXXXXXX (ровно 10 цифр после 8; первая из них - 9)
+        1) +7XXXXXXXXXX (ровно 10 цифр после +7)
+        2) 89XXXXXXXXX (ровно 10 цифр после 8; первая из них - 9)
         """
         v = Validator.require_non_empty("phone", value)
         v = Validator._clean_phone(v)
@@ -80,7 +90,9 @@ class Validator:
             return v
         if re.fullmatch(r"8(9\d{9})", v):
             return v
-        raise ValueError("Поле 'phone' должно быть: '+7XXXXXXXXXX' или '8XXXXXXXXXX' (после 8 — 9).")
+        raise ValueError(
+            "Поле 'phone' должно быть: '+7XXXXXXXXXX' или '8XXXXXXXXXX' (после 8 — 9)."
+        )
 
     @staticmethod
     def email_strict(value: str) -> str:
@@ -110,9 +122,13 @@ class Validator:
         label_re = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?$")
         for lab in labels:
             if not lab:
-                raise ValueError("Домен содержит пустую метку (две точки подряд или точка на краю).")
+                raise ValueError(
+                    "Домен содержит пустую метку (две точки подряд или точка на краю)."
+                )
             if not label_re.fullmatch(lab):
-                raise ValueError("Метка домена содержит недопустимые символы или начинается/заканчивается дефисом.")
+                raise ValueError(
+                    "Метка домена содержит недопустимые символы или начинается/заканчивается дефисом."
+                )
         if not re.fullmatch(r"[A-Za-z]{2,}", labels[-1]):
             raise ValueError("Доменная зона должна состоять минимум из двух букв.")
         return v

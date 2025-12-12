@@ -1,26 +1,30 @@
 # db_singleton.py
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Any
 
 import psycopg2
+from psycopg2.extensions import connection as pg_connection
 from psycopg2.extras import RealDictCursor
 
 
 class PgDB:
     """
-    Singleton для работы с PostgreSQL
+    Простой Singleton для работы с PostgreSQL (без ORM).
+    Открывает соединение на каждый вызов метода и сразу закрывает.
     """
-    _instance: Optional["PgDB"] = None
 
-    def __init__(self, **conn_params) -> None:
+    _instance: PgDB | None = None
+
+    def __init__(self, **conn_params: Any) -> None:
         # Инициализируется один раз через init()
         self._conn_params = dict(conn_params)
 
     @classmethod
-    def init(cls, **conn_params) -> None:
+    def init(cls, **conn_params: Any) -> None:
         """
-        Однократная инициализация подключения (Singleton)
+        Однократная инициализация параметров подключения (создаёт/обновляет Singleton).
         """
         if cls._instance is None:
             cls._instance = PgDB(**conn_params)
@@ -28,46 +32,51 @@ class PgDB:
             cls._instance._conn_params = dict(conn_params)
 
     @classmethod
-    def get(cls) -> "PgDB":
+    def get(cls) -> PgDB:
         if cls._instance is None:
-            raise RuntimeError("PgDB не инициализирован. Сначала надо вызвать PgDB.init()")
+            raise RuntimeError("PgDB не инициализирован. Сначала вызовите PgDB.init(...).")
         return cls._instance
 
-    def connect(self):
+    def connect(self) -> pg_connection:
         """
         Возвращает новое подключение с autocommit=True.
+        Вызывающий не обязан использовать контекст-менеджер: нижние методы
+        (fetch_one/fetch_all/execute/execute_returning) сами открывают/закрывают.
         """
-        conn = psycopg2.connect(**self._conn_params)
+        conn: pg_connection = psycopg2.connect(**self._conn_params)  # type: ignore[call-arg]
         conn.autocommit = True
         return conn
 
-    # --- Открываем соединение, выполняем запрос, закрываем. ---
+    # --- Простые обёртки: открыть соединение, выполнить запрос, закрыть. ---
 
-    def fetch_one(self, sql: str, params: Iterable | None = None) -> Optional[Dict[str, Any]]:
+    def fetch_one(self, sql: str, params: Iterable[Any] | None = None) -> dict[str, Any] | None:
         conn = self.connect()
         try:
             cur = conn.cursor(cursor_factory=RealDictCursor)
             try:
                 cur.execute(sql, params)
-                return cur.fetchone()
+                row = cur.fetchone()
+                # row может быть None, либо RealDictRow (dict-подобный)
+                return dict(row) if row is not None else None
             finally:
                 cur.close()
         finally:
             conn.close()
 
-    def fetch_all(self, sql: str, params: Iterable | None = None) -> List[Dict[str, Any]]:
+    def fetch_all(self, sql: str, params: Iterable[Any] | None = None) -> list[dict[str, Any]]:
         conn = self.connect()
         try:
             cur = conn.cursor(cursor_factory=RealDictCursor)
             try:
                 cur.execute(sql, params)
-                return cur.fetchall()
+                rows = cur.fetchall()
+                return [dict(r) for r in rows]
             finally:
                 cur.close()
         finally:
             conn.close()
 
-    def execute(self, sql: str, params: Iterable | None = None) -> int:
+    def execute(self, sql: str, params: Iterable[Any] | None = None) -> int:
         conn = self.connect()
         try:
             cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -79,7 +88,9 @@ class PgDB:
         finally:
             conn.close()
 
-    def execute_returning(self, sql: str, params: Iterable | None = None) -> Optional[Dict[str, Any]]:
+    def execute_returning(
+        self, sql: str, params: Iterable[Any] | None = None
+    ) -> dict[str, Any] | None:
         """
         Выполняет запрос с RETURNING и возвращает первую строку результата (dict) либо None.
         """
@@ -88,7 +99,8 @@ class PgDB:
             cur = conn.cursor(cursor_factory=RealDictCursor)
             try:
                 cur.execute(sql, params)
-                return cur.fetchone()
+                row = cur.fetchone()
+                return dict(row) if row is not None else None
             finally:
                 cur.close()
         finally:
