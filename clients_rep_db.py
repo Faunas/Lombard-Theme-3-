@@ -1,11 +1,13 @@
 from typing import Tuple, List, Dict, Optional, Any
 from datetime import date, datetime
-import psycopg2
 import json
+import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2 import errorcodes
+
 from client import Client
 from client_short import ClientShort
+from db_singleton import PgDB
 
 
 class ClientsRepDB:
@@ -23,14 +25,14 @@ class ClientsRepDB:
         password: str = "123",
         auto_migrate: bool = True,
     ) -> None:
-        self._conn_params = dict(
-            host=host, port=port, dbname=dbname, user=user, password=password
-        )
+        # Делегация: параметры сразу прокидываем в PgDB.
+        PgDB.init(host=host, port=port, dbname=dbname, user=user, password=password)
         if auto_migrate:
             self.ensure_schema()
 
-    def _connect(self):
-        return psycopg2.connect(**self._conn_params)
+    def connect(self):
+        # Делегируем создание соединения Singleton у
+        return PgDB.get().connect()
 
     def ensure_schema(self) -> None:
         """
@@ -53,10 +55,9 @@ class ClientsRepDB:
         """
         ddl_index_last_name = "CREATE INDEX IF NOT EXISTS idx_clients_last_name ON clients(last_name);"
 
-        with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(ddl_table)
-            cur.execute(ddl_index_last_name)
-            # commit произойдёт автоматически при выходе из with
+        db = PgDB.get()
+        db.execute(ddl_table)
+        db.execute(ddl_index_last_name)
 
     @staticmethod
     def _date_to_dd_mm_yyyy(d: date) -> str | None:
@@ -97,6 +98,7 @@ class ClientsRepDB:
             raise TypeError("id должен быть целым числом")
 
         errors: List[Dict[str, Any]] = []
+        db = PgDB.get()
 
         sql = """
             SELECT
@@ -114,11 +116,8 @@ class ClientsRepDB:
             WHERE id = %s;
         """
         try:
-            with self._connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(sql, (target_id,))
-                row = cur.fetchone()
-        except psycopg2.Error as e:
-            # Поднимаем дальше, чтобы сразу увидеть реальную причину ошибки
+            row = db.fetch_one(sql, (target_id,))
+        except psycopg2.Error:
             raise
 
         if row is None:
@@ -150,6 +149,7 @@ class ClientsRepDB:
             raise ValueError("k и n должны быть положительными целыми числами")
 
         offset = (k - 1) * n
+        db = PgDB.get()
 
         sql = """
             SELECT
@@ -166,9 +166,7 @@ class ClientsRepDB:
             ORDER BY id ASC
             LIMIT %s OFFSET %s;
         """
-        with self._connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, (n, offset))
-            rows = cur.fetchall()
+        rows = db.fetch_all(sql, (n, offset))
 
         result: List[ClientShort] = []
         for r in rows:
@@ -193,7 +191,6 @@ class ClientsRepDB:
         Возвращает объект Client с присвоенным id.
         Проверяем уникальность по (passport_series, passport_number).
         """
-        # Валидация и нормализация входа в единый Client
         if isinstance(data, Client):
             c = data
         elif isinstance(data, (dict, str)):
@@ -201,8 +198,8 @@ class ClientsRepDB:
         else:
             raise TypeError("data должен быть Client, dict или str")
 
-        # Преобразуем дату для INSERT
         bd = self._dd_mm_yyyy_to_date(c.birth_date)
+        db = PgDB.get()
 
         sql = """
             INSERT INTO clients
@@ -217,21 +214,14 @@ class ClientsRepDB:
         )
 
         try:
-            with self._connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(sql, params)
-                new_id = cur.fetchone()["id"]
+            row = db.execute_returning(sql, params)
         except psycopg2.IntegrityError as e:
-            # Ловим нарушение уникальности по паспорту
             if getattr(e, "pgcode", None) == errorcodes.UNIQUE_VIOLATION:
-                raise ValueError(
-                    "DuplicateClient: клиент с таким паспортом уже существует"
-                ) from e
+                raise ValueError("DuplicateClient: клиент с таким паспортом уже существует") from e
             raise
 
-        # Возвращаем тот же объект с присвоенным id
-        c.id = new_id
+        c.id = row["id"]
         return c
-
 
     # ===== 4(d) Заменить элемент списка по ID =====
     def replace_by_id(self, target_id: int, data: "Client | dict | str") -> Client:
@@ -244,7 +234,6 @@ class ClientsRepDB:
         if not isinstance(target_id, int):
             raise TypeError("id должен быть целым числом")
 
-        # Валидация через Client
         if isinstance(data, Client):
             c = data
         elif isinstance(data, (dict, str)):
@@ -252,11 +241,11 @@ class ClientsRepDB:
         else:
             raise TypeError("data должен быть Client, dict или str")
 
-        # id в payload, если задан, должен совпадать с target_id
         if c.id is not None and c.id != target_id:
             raise ValueError(f"Несоответствие ID: payload id={c.id} != target id={target_id}")
 
         bd = self._dd_mm_yyyy_to_date(c.birth_date)
+        db = PgDB.get()
 
         sql = """
             UPDATE clients
@@ -281,11 +270,8 @@ class ClientsRepDB:
         )
 
         try:
-            with self._connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(sql, params)
-                row = cur.fetchone()
+            row = db.execute_returning(sql, params)
         except psycopg2.IntegrityError as e:
-            # Проверка уникальности по паспорту
             if getattr(e, "pgcode", None) == errorcodes.UNIQUE_VIOLATION:
                 raise ValueError("DuplicateClient: клиент с таким паспортом уже существует") from e
             raise
@@ -308,8 +294,8 @@ class ClientsRepDB:
             raise TypeError("id должен быть целым числом")
 
         errors: list[dict[str, Any]] = []
+        db = PgDB.get()
 
-        # Сначала читаем строку - чтобы получить клиента, которого будет удалять
         select_sql = """
             SELECT
                 id,
@@ -327,22 +313,17 @@ class ClientsRepDB:
         """
         delete_sql = "DELETE FROM clients WHERE id = %s;"
 
-        with self._connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(select_sql, (target_id,))
-            row = cur.fetchone()
+        row = db.fetch_one(select_sql, (target_id,))
+        if row is None:
+            errors.append({
+                "id": target_id,
+                "error_type": "NotFound",
+                "message": f"Клиент с id={target_id} не найден"
+            })
+            return None, errors
 
-            if row is None:
-                errors.append({
-                    "id": target_id,
-                    "error_type": "NotFound",
-                    "message": f"Клиент с id={target_id} не найден"
-                })
-                return None, errors
+        db.execute(delete_sql, (target_id,))
 
-            # Удаляем
-            cur.execute(delete_sql, (target_id,))
-
-        # Пробуем вернуть как Client
         try:
             payload = self._row_to_client_payload(row)
             return Client(payload), errors
@@ -354,18 +335,14 @@ class ClientsRepDB:
             })
             return None, errors
 
-
     # ===== 4(f) Получить количество элементов =====
     def get_count(self) -> int:
         """
         Возвращает общее количество записей в таблице clients.
         """
-        sql = "SELECT COUNT(*) AS cnt FROM clients;"
-        with self._connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql)
-            row = cur.fetchone()
-            return int(row["cnt"])
-
+        db = PgDB.get()
+        row = db.fetch_one("SELECT COUNT(*) AS cnt FROM clients;")
+        return int(row["cnt"])
 
     # Массовая загрузка из clients_clean.json
     def import_from_clean_json(
@@ -394,65 +371,62 @@ class ClientsRepDB:
             "errors": []
         }
 
-        with self._connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-            if replace:
-                # Полная замена набора
-                cur.execute("TRUNCATE TABLE clients RESTART IDENTITY;")
+        db = PgDB.get()
+        if replace:
+            db.execute("TRUNCATE TABLE clients RESTART IDENTITY;")
 
-            for i, rec in enumerate(data):
-                # Валидация через Client
-                try:
-                    c = Client(rec)
-                except Exception as e:
-                    summary["invalid"] += 1
-                    summary["errors"].append({"index": i, "error": f"Invalid payload: {e}"})
-                    continue
+        for i, rec in enumerate(data):
+            try:
+                c = Client(rec)
+            except Exception as e:
+                summary["invalid"] += 1
+                summary["errors"].append({"index": i, "error": f"Invalid payload: {e}"})
+                continue
 
-                # Готовим поля к вставке
-                bd = self._dd_mm_yyyy_to_date(c.birth_date)
-                vals_common = (
-                    c.last_name, c.first_name, c.middle_name,
-                    c.passport_series, c.passport_number,
-                    bd, c.phone, c.email, c.address
-                )
+            bd = self._dd_mm_yyyy_to_date(c.birth_date)
+            vals_common = (
+                c.last_name, c.first_name, c.middle_name,
+                c.passport_series, c.passport_number,
+                bd, c.phone, c.email, c.address
+            )
 
-                if preserve_ids and c.id is not None:
-                    sql = """
-                        INSERT INTO clients
-                        (id, last_name, first_name, middle_name, passport_series, passport_number, birth_date, phone, email, address)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                        ON CONFLICT DO NOTHING
-                        RETURNING id;
-                    """
-                    params = (c.id,) + vals_common
-                else:
-                    sql = """
-                        INSERT INTO clients
-                        (last_name, first_name, middle_name, passport_series, passport_number, birth_date, phone, email, address)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                        ON CONFLICT DO NOTHING
-                        RETURNING id;
-                    """
-                    params = vals_common
+            if preserve_ids and c.id is not None:
+                sql = """
+                    INSERT INTO clients
+                    (id, last_name, first_name, middle_name, passport_series, passport_number, birth_date, phone, email, address)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT DO NOTHING
+                    RETURNING id;
+                """
+                params = (c.id,) + vals_common
+            else:
+                sql = """
+                    INSERT INTO clients
+                    (last_name, first_name, middle_name, passport_series, passport_number, birth_date, phone, email, address)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT DO NOTHING
+                    RETURNING id;
+                """
+                params = vals_common
 
-                cur.execute(sql, params)
-                row = cur.fetchone()
-                if row and row.get("id") is not None:
-                    summary["inserted"] += 1
-                else:
-                    summary["skipped_conflict"] += 1
+            row = db.execute_returning(sql, params)
+            if row and row.get("id") is not None:
+                summary["inserted"] += 1
+            else:
+                summary["skipped_conflict"] += 1
 
-            cur.execute("SELECT pg_get_serial_sequence('clients', 'id') AS seqname;")
-            seqname = cur.fetchone()["seqname"]
-            if seqname:
-                cur.execute("SELECT COALESCE(MAX(id), 0) AS mx FROM clients;")
-                max_id = cur.fetchone()["mx"]
-                cur.execute(f"SELECT setval('{seqname}', %s)", (max_id,))
+        seqname_row = db.fetch_one("SELECT pg_get_serial_sequence('clients', 'id') AS seqname;")
+        seqname = seqname_row["seqname"] if seqname_row else None
+        if seqname:
+            max_id_row = db.fetch_one("SELECT COALESCE(MAX(id), 0) AS mx FROM clients;")
+            max_id = max_id_row["mx"] if max_id_row else 0
+            db.execute(f"SELECT setval('{seqname}', %s)", (max_id,))
 
         return summary
 
 
 if __name__ == "__main__":
+    # Инициализация Singleton и репозитория (делегация всех SQL в PgDB)
     repo = ClientsRepDB(
         host="127.0.0.1",
         port=5432,
@@ -462,20 +436,18 @@ if __name__ == "__main__":
         auto_migrate=True,
     )
 
-    # Заполняем таблицу клиентами из clients_clean
     print("Импорт из clients_clean.json ...")
     summary = repo.import_from_clean_json("clients_clean.json", replace=True, preserve_ids=True)
     print(f"✓ Импорт завершён: total={summary['total']}, inserted={summary['inserted']}, "
           f"skipped={summary['skipped_conflict']}, invalid={summary['invalid']}")
     if summary["errors"]:
         print("Ошибки валидации при импорте:")
-        for e in summary["errors"][:5]:  # только первые 5
+        for e in summary["errors"][:5]:
             print("-", e)
 
     # Берём минимальный id для показа get_by_id
-    with repo._connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT MIN(id) AS min_id FROM clients;")
-        row = cur.fetchone()
+    db = PgDB.get()
+    row = db.fetch_one("SELECT MIN(id) AS min_id FROM clients;")
     target_id = row["min_id"]
 
     client_obj, errs = repo.get_by_id(target_id)
@@ -487,7 +459,7 @@ if __name__ == "__main__":
         for e in errs:
             print(f"- id={e.get('id')}: {e['error_type']}: {e['message']}")
 
-    # Пагинация: покажем первые 2 страницы по 3 элемента
+    # Пагинация: первые 2 страницы по 3 элемента
     print("\nСтраница 1 (по 3 элемента):")
     for s in repo.get_k_n_short_list(1, 3, prefer_contact="phone"):
         print("-", s)
@@ -521,7 +493,7 @@ if __name__ == "__main__":
             "last_name": "Романов",
             "first_name": "Роман",
             "middle_name": "Сергеевич",
-            "passport_series": added.passport_series,   # оставим прежний паспорт
+            "passport_series": added.passport_series,
             "passport_number": added.passport_number,
             "birth_date": added.birth_date,
             "phone": added.phone,
@@ -546,5 +518,3 @@ if __name__ == "__main__":
     # f) get_count
     total = repo.get_count()
     print(f"\n✓ Количество элементов (get_count): {total}")
-
-
