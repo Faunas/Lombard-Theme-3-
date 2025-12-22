@@ -43,7 +43,6 @@ class AddClientController:
             "address": form.get("address", ""),
         }
 
-
     def add_form(self, environ, start_response):
         body_html = self.view.render(mode="create")
         start_response("200 OK", [("Content-Type", "text/html; charset=utf-8")])

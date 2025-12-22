@@ -1,11 +1,12 @@
 # web_views.py
 from __future__ import annotations
-from typing import Iterable
+from typing import Iterable, Optional
 from html import escape
 import json
 
 from client_short import ClientShort
 from client import Client
+
 
 
 def layout(title: str, body_html: str) -> bytes:
@@ -16,19 +17,35 @@ def layout(title: str, body_html: str) -> bytes:
 <title>{escape(title)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
+  :root {{
+    --danger:#b00020;
+    --muted:#666;
+    --b:#ddd;
+  }}
   body {{ font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; }}
   table {{ border-collapse: collapse; width: 100%; }}
-  th, td {{ border: 1px solid #ddd; padding: 8px; }}
+  th, td {{ border: 1px solid var(--b); padding: 8px; vertical-align: top; }}
   th {{ background: #fafafa; text-align: left; }}
   a.button {{ display:inline-block; padding:6px 10px; border:1px solid #555; border-radius:6px; text-decoration:none; }}
-  .button.danger {{ border-color:#b00020; color:#b00020; }}
-  .muted {{ color:#666; font-size: 90%; }}
+  a.button.danger {{ border-color: var(--danger); color: var(--danger); }}
+  .muted {{ color:var(--muted); font-size: 90%; }}
   .grid {{ display:grid; grid-template-columns: repeat(2,minmax(220px,1fr)); gap:10px; }}
   .grid .full {{ grid-column: 1 / -1; }}
-  label > span.req {{ color:#b00020; margin-left:4px; }}
+  label > span.req {{ color:var(--danger); margin-left:4px; }}
   input {{ width:100%; padding:6px 8px; box-sizing:border-box; }}
   button {{ padding:6px 12px; }}
   .btns > a {{ margin-right: 6px; }}
+  .filters {{
+    display:grid; grid-template-columns: repeat(4,minmax(180px,1fr)); gap:10px;
+    border:1px solid var(--b); padding:12px; border-radius:8px; margin-bottom:14px;
+  }}
+  .filters .row {{ display:flex; flex-direction:column; gap:6px; }}
+  .filters .row span {{ font-size:12px; color:#333; }}
+  .filters .wide {{ grid-column: 1 / -1; }}
+  .error {{ color:var(--danger); margin:8px 0; }}
+  .flex {{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }}
+  .pill {{ display:inline-block; border:1px solid var(--b); padding:4px 8px; border-radius:999px; font-size:12px; }}
+  .right {{ margin-left:auto; }}
 </style>
 </head>
 <body>
@@ -38,7 +55,111 @@ def layout(title: str, body_html: str) -> bytes:
     return html.encode("utf-8")
 
 
-def index_view(shorts: Iterable[ClientShort]) -> bytes:
+def _esc(x: str | None) -> str:
+    return escape(x or "", quote=True)
+
+
+
+class ClientFormView:
+    """
+    Один класс окна формы. Разное поведение задаётся параметром mode:
+      - mode="create": пустая форма, action=/client/create
+      - mode="edit": предзаполненная форма, action=/client/update, нужен cid
+    """
+
+    def _form(
+        self,
+        *,
+        title: str,
+        action: str,
+        submit_text: str,
+        values: dict | None = None,
+        error: str | None = None,
+        hidden: dict | None = None,
+    ) -> str:
+        v = {
+            "last_name": "", "first_name": "", "middle_name": "",
+            "passport_series": "", "passport_number": "",
+            "birth_date": "", "phone": "", "email": "", "address": "",
+        }
+        if values:
+            for k in v:
+                v[k] = (values.get(k) or "")
+
+        def esc(x: str) -> str: return escape(x, quote=True)
+        err_html = f'<div class="error">⚠ {escape(error)}</div>' if error else ""
+
+        hidden_html = ""
+        if hidden:
+            hidden_html = "".join(
+                f'<input type="hidden" name="{escape(k)}" value="{esc(str(hidden[k]))}">'
+                for k in hidden.keys()
+            )
+
+        return f"""
+<h1>{escape(title)}</h1>
+{err_html}
+<form method="POST" action="{escape(action)}">
+  {hidden_html}
+  <div class="grid">
+    <label>Фамилия<span class="req">*</span><input name="last_name" required value="{esc(v['last_name'])}"></label>
+    <label>Имя<span class="req">*</span><input name="first_name" required value="{esc(v['first_name'])}"></label>
+    <label>Отчество<span class="req">*</span><input name="middle_name" required value="{esc(v['middle_name'])}"></label>
+    <label>Серия паспорта<span class="req">*</span><input name="passport_series" maxlength="4" required value="{esc(v['passport_series'])}"></label>
+    <label>Номер паспорта<span class="req">*</span><input name="passport_number" maxlength="6" required value="{esc(v['passport_number'])}"></label>
+    <label>Дата рождения<span class="req">*</span><input name="birth_date" placeholder="ДД-ММ-ГГГГ" required value="{esc(v['birth_date'])}"></label>
+    <label>Телефон<span class="req">*</span><input name="phone" required value="{esc(v['phone'])}"></label>
+    <label>Email<span class="req">*</span><input name="email" required value="{esc(v['email'])}"></label>
+    <label class="full">Адрес<span class="req">*</span><input name="address" required value="{esc(v['address'])}"></label>
+  </div>
+  <div style="margin-top:12px;">
+    <button type="submit">{escape(submit_text)}</button>
+    <button type="button" onclick="window.close()">Отмена</button>
+  </div>
+</form>
+"""
+
+    def render(
+        self,
+        *,
+        mode: str,
+        cid: int | None = None,
+        values: dict | None = None,
+        error: str | None = None,
+    ) -> str:
+        if mode == "create":
+            return self._form(
+                title="Новый клиент",
+                action="/client/create",
+                submit_text="Сохранить",
+                values=values,
+                error=error,
+            )
+        if mode == "edit":
+            if cid is None:
+                raise ValueError("Для mode='edit' требуется cid")
+            return self._form(
+                title=f"Редактирование клиента #{cid}",
+                action="/client/update",
+                submit_text="Сохранить изменения",
+                values=values,
+                error=error,
+                hidden={"id": cid},
+            )
+        raise ValueError("mode должен быть 'create' или 'edit'")
+
+
+def index_view(
+    shorts: Iterable[ClientShort],
+    *,
+    filters: dict[str, str],
+    total: int,
+    page: int,
+    page_size: int,
+    prev_link: Optional[str],
+    next_link: Optional[str],
+    error_msg: Optional[str] = None,
+) -> bytes:
     rows = []
     for s in shorts:
         cid = s.id if s.id is not None else "-"
@@ -56,8 +177,43 @@ def index_view(shorts: Iterable[ClientShort]) -> bytes:
             "</tr>"
         )
 
+    err_html = f"<div class='error'>⚠ {escape(error_msg)}</div>" if error_msg else ""
+
     body = f"""
 <h1>Клиенты (краткая информация)</h1>
+
+<form method="GET" action="/" class="filters">
+  <div class="row"><span>Фамилия (подстрока)</span><input name="ln" value="{_esc(filters.get('ln'))}"></div>
+  <div class="row"><span>Имя (подстрока)</span><input name="fn" value="{_esc(filters.get('fn'))}"></div>
+  <div class="row"><span>Отчество (подстрока)</span><input name="mn" value="{_esc(filters.get('mn'))}"></div>
+  <div class="row"><span>Контакт для вывода</span>
+    <input name="contact" list="contact_list" value="{_esc(filters.get('contact') or 'phone')}" />
+    <datalist id="contact_list">
+      <option value="phone" />
+      <option value="email" />
+    </datalist>
+  </div>
+
+  <div class="row"><span>Телефон (подстрока)</span><input name="ph" value="{_esc(filters.get('ph'))}"></div>
+  <div class="row"><span>Email (подстрока)</span><input name="em" value="{_esc(filters.get('em'))}"></div>
+  <div class="row"><span>Серия паспорта (=)</span><input name="ps" maxlength="4" value="{_esc(filters.get('ps'))}"></div>
+  <div class="row"><span>Номер паспорта (=)</span><input name="pn" maxlength="6" value="{_esc(filters.get('pn'))}"></div>
+
+  <div class="row"><span>ДР от (ДД-ММ-ГГГГ)</span><input name="bd_from" value="{_esc(filters.get('bd_from'))}"></div>
+  <div class="row"><span>ДР до (ДД-ММ-ГГГГ)</span><input name="bd_to" value="{_esc(filters.get('bd_to'))}"></div>
+  <div class="row"><span>Страница</span><input name="k" value="{page}"></div>
+  <div class="row"><span>Размер страницы</span><input name="n" value="{page_size}"></div>
+
+  <div class="wide flex">
+    <div class="flex">
+      <button type="submit">Применить</button>
+      <a class="button" href="/">Сбросить</a>
+    </div>
+    <div class="right muted">Найдено: <b>{total}</b></div>
+  </div>
+</form>
+
+{err_html}
 
 <p style="margin: 12px 0 18px;">
   <a class="button" id="btn-create" data-popup="1" href="/client/add">Добавить клиента</a>
@@ -70,6 +226,16 @@ def index_view(shorts: Iterable[ClientShort]) -> bytes:
     {''.join(rows)}
   </tbody>
 </table>
+
+<div class="flex" style="margin-top:10px;">
+  <span class="pill">Стр. {page}</span>
+  <span class="pill">По {page_size}</span>
+  <span class="pill">Всего {total}</span>
+  <span class="right">
+    {"<a class='button' href='" + escape(prev_link) + "'>&larr; Назад</a>" if prev_link else ""}
+    {"<a class='button' href='" + escape(next_link) + "'>Вперёд &rarr;</a>" if next_link else ""}
+  </span>
+</div>
 
 <script>
   (function() {{
@@ -96,6 +262,7 @@ def index_view(shorts: Iterable[ClientShort]) -> bytes:
 </script>
 """
     return layout("Главная — Клиенты", body)
+
 
 
 def detail_view(c: Client) -> bytes:
@@ -131,22 +298,12 @@ def detail_view(c: Client) -> bytes:
                     'width=860,height=760');
       }});
     }}
-    // Реакция на изменения из всплывающих окон
+    // Если из окна что-то прилетело — обновим карточку
     window.addEventListener('message', function(ev) {{
       if (ev.origin !== window.location.origin) return;
-      var data = ev.data || {{}};
-      if (!data.type) return;
-      if (data.type === 'client_updated') {{
+      var t = ev.data && ev.data.type;
+      if (t === 'client_updated' || t === 'client_deleted' || t === 'client_added') {{
         window.location.reload();
-        return;
-      }}
-      if (data.type === 'client_deleted') {{
-        var deletedId = data.payload && data.payload.id;
-        if (String(deletedId) === String({c.id})) {{
-          window.location.href = '/';
-        }} else {{
-          window.location.reload();
-        }}
       }}
     }});
   }})();
@@ -157,102 +314,6 @@ def detail_view(c: Client) -> bytes:
 
 def not_found_view(msg: str = "Not Found") -> bytes:
     return layout("404", f"<h1>404</h1><p>{escape(msg)}</p>")
-
-
-class ClientFormView:
-    """
-    Один «класс окна» для формы клиента.
-    Режимы:
-      - mode='create' -> action=/client/create, пустые поля
-      - mode='edit'   -> action=/client/update, скрытый input id, предзаполненные поля
-    """
-
-    @staticmethod
-    def _defaults() -> dict:
-        return {
-            "last_name": "", "first_name": "", "middle_name": "",
-            "passport_series": "", "passport_number": "",
-            "birth_date": "", "phone": "", "email": "", "address": "",
-        }
-
-    @staticmethod
-    def _esc(x: str) -> str:
-        return escape(x, quote=True)
-
-    def render(
-        self,
-        *,
-        mode: str,                 # 'create' | 'edit'
-        values: dict | None = None,
-        error: str | None = None,
-        cid: int | None = None
-    ) -> str:
-        v = self._defaults()
-        if values:
-            for k in v:
-                v[k] = (values.get(k) or "")
-
-        err_html = f'<div style="color:#b00020;margin:8px 0;">⚠ {escape(error)}</div>' if error else ""
-
-        is_edit = (mode == "edit")
-        title = f"Редактирование клиента #{cid}" if is_edit else "Новый клиент"
-        action = "/client/update" if is_edit else "/client/create"
-        submit_text = "Сохранить изменения" if is_edit else "Сохранить"
-        id_hidden = f'<input type="hidden" name="id" value="{cid}">' if is_edit and cid is not None else ""
-
-        return f"""
-<h1>{escape(title)}</h1>
-{err_html}
-<form method="POST" action="{action}">
-  {id_hidden}
-  <div class="grid">
-    <label>Фамилия<span class="req">*</span><input name="last_name" required value="{self._esc(v['last_name'])}"></label>
-    <label>Имя<span class="req">*</span><input name="first_name" required value="{self._esc(v['first_name'])}"></label>
-    <label>Отчество<span class="req">*</span><input name="middle_name" required value="{self._esc(v['middle_name'])}"></label>
-    <label>Серия паспорта<span class="req">*</span><input name="passport_series" maxlength="4" required value="{self._esc(v['passport_series'])}"></label>
-    <label>Номер паспорта<span class="req">*</span><input name="passport_number" maxlength="6" required value="{self._esc(v['passport_number'])}"></label>
-    <label>Дата рождения<span class="req">*</span><input name="birth_date" placeholder="ДД-ММ-ГГГГ" required value="{self._esc(v['birth_date'])}"></label>
-    <label>Телефон<span class="req">*</span><input name="phone" required value="{self._esc(v['phone'])}"></label>
-    <label>Email<span class="req">*</span><input name="email" required value="{self._esc(v['email'])}"></label>
-    <label class="full">Адрес<span class="req">*</span><input name="address" required value="{self._esc(v['address'])}"></label>
-  </div>
-  <div style="margin-top:12px;">
-    <button type="submit">{escape(submit_text)}</button>
-    <button type="button" onclick="window.close()">Отмена</button>
-  </div>
-</form>
-"""
-
-
-def confirm_delete_view(c: Client | None, error: str | None = None) -> str:
-    """
-    Мини-окно подтверждения удаления. Показывает краткую информацию и кнопку подтверждения.
-    """
-    err_html = f'<div style="color:#b00020;margin:8px 0;">⚠ {escape(error)}</div>' if error else ""
-    if c is None:
-        return f"""
-<h1>Удаление клиента</h1>
-{err_html}
-<p>Запись не найдена.</p>
-<p><button type="button" onclick="window.close()">Закрыть</button></p>
-"""
-    return f"""
-<h1>Удалить клиента #{c.id}?</h1>
-{err_html}
-<p class="muted">Действие необратимо.</p>
-<table>
-  <tbody>
-    <tr><th>ФИО</th><td>{escape(c.last_name)} {escape(c.first_name)} {escape(c.middle_name)}</td></tr>
-    <tr><th>Паспорт</th><td>{escape(c.passport_series)} {escape(c.passport_number)}</td></tr>
-    <tr><th>Контакты</th><td>{escape(c.phone)} / {escape(c.email)}</td></tr>
-  </tbody>
-</table>
-<form method="POST" action="/client/remove" style="margin-top:12px;">
-  <input type="hidden" name="id" value="{c.id}">
-  <button type="submit" style="border:1px solid #b00020;color:#b00020;padding:6px 12px;border-radius:6px;">Удалить</button>
-  <button type="button" onclick="window.close()">Отмена</button>
-</form>
-"""
 
 
 def success_and_close(message: str, *, event_type: str = "client_added", payload: dict | None = None) -> str:

@@ -18,6 +18,7 @@ class DeleteClientController:
     def __init__(self, repo: ObservableClientsRepo) -> None:
         self.repo = repo
 
+
     @staticmethod
     def _query(environ) -> Dict[str, list[str]]:
         return parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
@@ -57,16 +58,14 @@ class DeleteClientController:
             start_response("400 Bad Request", [("Content-Type", "text/html; charset=utf-8")])
             return [not_found_view("Некорректный id")]
 
-        # пытаемся удалить
         deleted, errors = self.repo.delete_by_id(cid)
         if not deleted:
-            # показать окно подтверждения снова, но с ошибкой
             client, _ = self.repo.get_by_id(cid)
             body_html = confirm_delete_view(client, error=(errors[0]["message"] if errors else "Не удалось удалить"))
             start_response("400 Bad Request", [("Content-Type", "text/html; charset=utf-8")])
             return [layout("Ошибка удаления", body_html)]
 
-        # успех — уведомляем opener и закрываем окно
+        # успех удаления - уведомляем opener и закрываем окно
         try:
             # опционально дублируем серверное событие
             self.repo.notify("client_deleted", {"id": cid, "ok": True, "errors": []})

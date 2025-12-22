@@ -9,7 +9,6 @@ from web_controller import MainController
 from web_views import layout
 from add_controller import AddClientController
 from edit_controller import EditClientController
-from delete_controller import DeleteClientController  # NEW
 
 DATA_BACKEND = "db"  # 'db' | 'json' | 'yaml'
 
@@ -31,6 +30,13 @@ def make_base_repo():
     Возвращает один из репозиториев согласно DATA_BACKEND.
     """
     if DATA_BACKEND == "db":
+        # инициализируем PgDB для работы декоратора фильтрации
+        try:
+            from db_singleton import PgDB
+            PgDB.init(**DB_CONFIG)
+        except Exception:
+            pass
+
         from clients_rep_db_adapter import ClientsRepDBAdapter
         return ClientsRepDBAdapter(**DB_CONFIG)
 
@@ -38,6 +44,7 @@ def make_base_repo():
         from clients_rep_yaml import ClientsRepYaml
         return ClientsRepYaml(YAML_PATH)
 
+    # по умолчанию json
     from client_rep_json import ClientsRepJson
     return ClientsRepJson(JSON_PATH)
 
@@ -52,7 +59,6 @@ def application_factory() -> Tuple[Callable, MainController]:
     controller = MainController(repo)
     add_ctrl = AddClientController(repo)
     edit_ctrl = EditClientController(repo)
-    del_ctrl = DeleteClientController(repo)
 
     def app(environ, start_response):
         path = environ.get("PATH_INFO", "/")
@@ -66,23 +72,15 @@ def application_factory() -> Tuple[Callable, MainController]:
         if path == "/client/detail":
             return controller.detail(environ, start_response)
 
-        # создание
         if path == "/client/add":
             return add_ctrl.add_form(environ, start_response)
         if path == "/client/create":
             return add_ctrl.create(environ, start_response)
 
-        # редактирование
         if path == "/client/edit":
             return edit_ctrl.edit_form(environ, start_response)
         if path == "/client/update":
             return edit_ctrl.update(environ, start_response)
-
-        # удаление
-        if path == "/client/delete":
-            return del_ctrl.confirm(environ, start_response)
-        if path == "/client/remove":
-            return del_ctrl.remove(environ, start_response)
 
         if path == "/debug/health":
             try:

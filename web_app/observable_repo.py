@@ -10,12 +10,12 @@ from client_short import ClientShort
 
 class ObservableClientsRepo(Subject):
     """
-    Subject-обёртка над любым BaseClientsRepo.
+    Обёртка-Subject над любым BaseClientsRepo.
     Делегирует вызовы внутрь базового репозитория и шлёт события наблюдателям.
 
     События:
-      - "list_ready"      payload: list[ClientShort]
-      - "client_selected" payload: Client
+      - "list_ready"      payload: list[ClientShort]  (когда готовы данные для таблицы)
+      - "client_selected" payload: Client             (когда открыта карточка)
       - "client_added"    payload: Client
       - "client_updated"  payload: Client
       - "client_deleted"  payload: dict(id=..., ok=bool, errors=list)
@@ -25,25 +25,56 @@ class ObservableClientsRepo(Subject):
         super().__init__()
         self._base = base
 
-    def list_all_short(self, *, prefer_contact: str = "phone") -> list[ClientShort]:
+    def backend_kind(self) -> str:
+        """
+        Возвращает 'db' или 'file' (json/yaml).
+        """
         try:
-            shorts = self._base.get_k_n_short_list(1, 10**9, prefer_contact=prefer_contact)
+            from clients_rep_db_adapter import ClientsRepDBAdapter  # type: ignore
+            if isinstance(self._base, ClientsRepDBAdapter):
+                return "db"
+        except Exception:
+            pass
+        return "file"
+
+    def base_repo(self) -> BaseClientsRepo:
+        """
+        Возвращает исходный (ненаблюдаемый) репозиторий.
+        Нужен контроллеру, чтобы оборачивать файловый репо в декоратор фильтрации.
+        """
+        return self._base
+
+    def list_all_short(self, *, prefer_contact: str = "phone") -> list[ClientShort]:
+        """
+        Возвращает весь список (short) для таблицы и уведомляет "list_ready".
+        """
+        try:
+            shorts = self._base.get_k_n_short_list(
+                1, 10**9, prefer_contact=prefer_contact
+            )
         except Exception:
             ok, _ = self._base.read_all(tolerant=True)
             shorts = [
                 ClientShort(self._base.client_to_dict(c), prefer_contact=prefer_contact)
                 for c in ok
             ]
+
         self.notify("list_ready", shorts)
         return shorts
 
     def select_client(self, cid: int) -> Client:
+        """
+        Возвращает клиента по id и уведомляет "client_selected".
+        Совместимо и с файловыми репо, и с DB-адаптером.
+        """
         try:
             obj, errs = self._base.get_by_id(cid, allow_raw_fallback=True)
         except TypeError:
             obj, errs = self._base.get_by_id(cid)
+
         if not obj:
             raise ValueError(errs[0]["message"] if errs else f"Клиент id={cid} не найден")
+
         self.notify("client_selected", obj)
         return obj
 
@@ -78,7 +109,10 @@ class ObservableClientsRepo(Subject):
         return self._base.get_k_n_short_list(k, n, prefer_contact=prefer_contact)
 
     def get_by_id(self, cid: int) -> tuple[Client | None, list[dict[str, Any]]]:
-        """Совместимо с файловыми репо (есть allow_raw_fallback) и DB-адаптером (нет allow_raw_fallback)."""
+        """
+        Прямая делегация к базовому репозиторию.
+        Совместимо и с файловыми репо (allow_raw_fallback), и с DB-адаптером (без него).
+        """
         try:
             return self._base.get_by_id(cid, allow_raw_fallback=True)
         except TypeError:
