@@ -9,6 +9,7 @@ from web_controller import MainController
 from web_views import layout
 from add_controller import AddClientController
 from edit_controller import EditClientController
+from delete_controller import DeleteClientController  # NEW
 
 DATA_BACKEND = "db"  # 'db' | 'json' | 'yaml'
 
@@ -51,6 +52,7 @@ def application_factory() -> Tuple[Callable, MainController]:
     controller = MainController(repo)
     add_ctrl = AddClientController(repo)
     edit_ctrl = EditClientController(repo)
+    del_ctrl = DeleteClientController(repo)
 
     def app(environ, start_response):
         path = environ.get("PATH_INFO", "/")
@@ -75,6 +77,12 @@ def application_factory() -> Tuple[Callable, MainController]:
             return edit_ctrl.edit_form(environ, start_response)
         if path == "/client/update":
             return edit_ctrl.update(environ, start_response)
+
+        # удаление
+        if path == "/client/delete":
+            return del_ctrl.confirm(environ, start_response)
+        if path == "/client/remove":
+            return del_ctrl.remove(environ, start_response)
 
         if path == "/debug/health":
             try:

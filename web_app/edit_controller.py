@@ -47,6 +47,7 @@ class EditClientController:
             "address": form.get("address", ""),
         }
 
+
     def edit_form(self, environ, start_response):
         q = self._query(environ)
         try:

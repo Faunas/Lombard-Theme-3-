@@ -21,6 +21,7 @@ def layout(title: str, body_html: str) -> bytes:
   th, td {{ border: 1px solid #ddd; padding: 8px; }}
   th {{ background: #fafafa; text-align: left; }}
   a.button {{ display:inline-block; padding:6px 10px; border:1px solid #555; border-radius:6px; text-decoration:none; }}
+  .button.danger {{ border-color:#b00020; color:#b00020; }}
   .muted {{ color:#666; font-size: 90%; }}
   .grid {{ display:grid; grid-template-columns: repeat(2,minmax(220px,1fr)); gap:10px; }}
   .grid .full {{ grid-column: 1 / -1; }}
@@ -50,6 +51,7 @@ def index_view(shorts: Iterable[ClientShort]) -> bytes:
             "<td class='btns'>"
             f"<a class='button' target='_blank' href='/client/select?id={cid}'>Открыть</a>"
             f"<a class='button' data-popup='1' href='/client/edit?id={cid}'>Редактировать</a>"
+            f"<a class='button danger' data-popup='1' href='/client/delete?id={cid}'>Удалить</a>"
             "</td>"
             "</tr>"
         )
@@ -102,6 +104,7 @@ def detail_view(c: Client) -> bytes:
 <p class='btns'>
   <a class='button' href='/'>&larr; На главную</a>
   <a class='button' data-popup='1' data-name='edit_client' href='/client/edit?id={c.id}'>Редактировать</a>
+  <a class='button danger' data-popup='1' data-name='delete_client' href='/client/delete?id={c.id}'>Удалить</a>
 </p>
 <table>
   <tbody>
@@ -128,12 +131,22 @@ def detail_view(c: Client) -> bytes:
                     'width=860,height=760');
       }});
     }}
-    // Если из окна редактирования прилетело событие — обновим карточку
+    // Реакция на изменения из всплывающих окон
     window.addEventListener('message', function(ev) {{
       if (ev.origin !== window.location.origin) return;
-      var t = ev.data && ev.data.type;
-      if (t === 'client_updated') {{
+      var data = ev.data || {{}};
+      if (!data.type) return;
+      if (data.type === 'client_updated') {{
         window.location.reload();
+        return;
+      }}
+      if (data.type === 'client_deleted') {{
+        var deletedId = data.payload && data.payload.id;
+        if (String(deletedId) === String({c.id})) {{
+          window.location.href = '/';
+        }} else {{
+          window.location.reload();
+        }}
       }}
     }});
   }})();
@@ -207,6 +220,37 @@ class ClientFormView:
     <button type="submit">{escape(submit_text)}</button>
     <button type="button" onclick="window.close()">Отмена</button>
   </div>
+</form>
+"""
+
+
+def confirm_delete_view(c: Client | None, error: str | None = None) -> str:
+    """
+    Мини-окно подтверждения удаления. Показывает краткую информацию и кнопку подтверждения.
+    """
+    err_html = f'<div style="color:#b00020;margin:8px 0;">⚠ {escape(error)}</div>' if error else ""
+    if c is None:
+        return f"""
+<h1>Удаление клиента</h1>
+{err_html}
+<p>Запись не найдена.</p>
+<p><button type="button" onclick="window.close()">Закрыть</button></p>
+"""
+    return f"""
+<h1>Удалить клиента #{c.id}?</h1>
+{err_html}
+<p class="muted">Действие необратимо.</p>
+<table>
+  <tbody>
+    <tr><th>ФИО</th><td>{escape(c.last_name)} {escape(c.first_name)} {escape(c.middle_name)}</td></tr>
+    <tr><th>Паспорт</th><td>{escape(c.passport_series)} {escape(c.passport_number)}</td></tr>
+    <tr><th>Контакты</th><td>{escape(c.phone)} / {escape(c.email)}</td></tr>
+  </tbody>
+</table>
+<form method="POST" action="/client/remove" style="margin-top:12px;">
+  <input type="hidden" name="id" value="{c.id}">
+  <button type="submit" style="border:1px solid #b00020;color:#b00020;padding:6px 12px;border-radius:6px;">Удалить</button>
+  <button type="button" onclick="window.close()">Отмена</button>
 </form>
 """
 
