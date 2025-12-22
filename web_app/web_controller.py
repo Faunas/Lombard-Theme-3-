@@ -1,6 +1,6 @@
 # web_controller.py
 from __future__ import annotations
-from typing import Callable, Dict, Any
+from typing import Dict, Any
 from urllib.parse import parse_qs
 
 from mvc_observer import Observer
@@ -11,9 +11,9 @@ from client import Client
 
 class MainController(Observer):
     """
-    Вся логика в контроллере.
+    Controller: вся логика в контроллере.
     View — только отрисовка, Model — репозиторий + сущности.
-    Контроллер подписан на события репозитория (Observer).
+    Подписан на события репозитория (Observer).
     """
     def __init__(self, repo: ObservableClientsRepo) -> None:
         self.repo = repo

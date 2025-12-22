@@ -31,16 +31,13 @@ def make_base_repo():
     """
     if DATA_BACKEND == "db":
         from clients_rep_db_adapter import ClientsRepDBAdapter
-
         return ClientsRepDBAdapter(**DB_CONFIG)
 
     if DATA_BACKEND == "yaml":
         from clients_rep_yaml import ClientsRepYaml
-
         return ClientsRepYaml(YAML_PATH)
 
     from client_rep_json import ClientsRepJson
-
     return ClientsRepJson(JSON_PATH)
 
 
@@ -67,11 +64,13 @@ def application_factory() -> Tuple[Callable, MainController]:
         if path == "/client/detail":
             return controller.detail(environ, start_response)
 
+        # создание
         if path == "/client/add":
             return add_ctrl.add_form(environ, start_response)
         if path == "/client/create":
             return add_ctrl.create(environ, start_response)
 
+        # редактирование
         if path == "/client/edit":
             return edit_ctrl.edit_form(environ, start_response)
         if path == "/client/update":

@@ -1,6 +1,6 @@
 # mvc_observer.py
 from __future__ import annotations
-from typing import Protocol, Any, Iterable, Callable, Dict, List, Tuple
+from typing import Protocol, Any
 
 
 class Observer(Protocol):

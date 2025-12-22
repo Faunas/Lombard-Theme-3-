@@ -5,18 +5,19 @@ from urllib.parse import parse_qs
 from typing import Any, Dict
 
 from observable_repo import ObservableClientsRepo
-from web_views import layout, add_client_form, success_and_close
+from web_views import layout, ClientFormView, success_and_close
 
 
 class AddClientController:
     """
     Отдельный контроллер для окна добавления клиента (MVC).
-    GET /client/add    -> форма
-    POST /client/create -> попытка создания, при успехе закрываем окно и обновляем opener.
+    GET  /client/add     -> форма (пустая)
+    POST /client/create  -> создание, при успехе postMessage + закрытие окна.
     """
 
     def __init__(self, repo: ObservableClientsRepo) -> None:
         self.repo = repo
+        self.view = ClientFormView()
 
     @staticmethod
     def _read_post(environ) -> Dict[str, str]:
@@ -44,7 +45,7 @@ class AddClientController:
 
 
     def add_form(self, environ, start_response):
-        body_html = add_client_form()
+        body_html = self.view.render(mode="create")
         start_response("200 OK", [("Content-Type", "text/html; charset=utf-8")])
         return [layout("Добавить клиента", body_html)]
 
@@ -55,7 +56,7 @@ class AddClientController:
         try:
             created = self.repo.add_client(payload)  # валидация внутри Client
             try:
-                self.repo.notify("created", created)
+                self.repo.notify("client_added", created)
             except Exception:
                 pass
 
@@ -68,7 +69,6 @@ class AddClientController:
             return [layout("Успешно", body_html)]
 
         except Exception as e:
-            body_html = add_client_form(values=payload, error=str(e))
+            body_html = self.view.render(mode="create", values=payload, error=str(e))
             start_response("400 Bad Request", [("Content-Type", "text/html; charset=utf-8")])
             return [layout("Ошибка валидации", body_html)]
-

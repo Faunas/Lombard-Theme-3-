@@ -1,24 +1,23 @@
 # edit_controller.py
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 from urllib.parse import parse_qs
 
 from observable_repo import ObservableClientsRepo
-from web_views import layout, edit_client_form, success_and_close
-from web_views import not_found_view  # для аккуратных 404
+from web_views import layout, ClientFormView, success_and_close, not_found_view
 
 
 class EditClientController:
     """
     MVC-контроллер для редактирования клиента в отдельном окне/вкладке.
     GET  /client/edit?id=...   -> форма с предзаполненными полями
-    POST /client/update        -> попытка сохранения, при успехе шлём postMessage и закрываем окно
+    POST /client/update        -> сохранение, при успехе postMessage + закрытие окна
     """
 
     def __init__(self, repo: ObservableClientsRepo) -> None:
         self.repo = repo
-
+        self.view = ClientFormView()
 
     @staticmethod
     def _query(environ) -> Dict[str, list[str]]:
@@ -36,7 +35,6 @@ class EditClientController:
 
     @staticmethod
     def _normalize(form: Dict[str, str]) -> Dict[str, Any]:
-        # Приводим к полям Client
         return {
             "last_name": form.get("last_name", ""),
             "first_name": form.get("first_name", ""),
@@ -48,7 +46,6 @@ class EditClientController:
             "email": form.get("email", ""),
             "address": form.get("address", ""),
         }
-
 
     def edit_form(self, environ, start_response):
         q = self._query(environ)
@@ -74,7 +71,7 @@ class EditClientController:
             "email": client.email,
             "address": client.address,
         }
-        body_html = edit_client_form(cid, values=values)
+        body_html = self.view.render(mode="edit", cid=client.id, values=values)
         start_response("200 OK", [("Content-Type", "text/html; charset=utf-8")])
         return [layout("Редактирование клиента", body_html)]
 
@@ -87,9 +84,8 @@ class EditClientController:
             return [not_found_view("Некорректный id")]
 
         payload = self._normalize(form)
-
         try:
-            updated = self.repo.replace_by_id(cid, payload)  # валидация — внутри Client
+            updated = self.repo.replace_by_id(cid, payload)
             try:
                 self.repo.notify("client_updated", updated)
             except Exception:
@@ -104,6 +100,6 @@ class EditClientController:
             return [layout("Успешно", body_html)]
 
         except Exception as e:
-            body_html = edit_client_form(cid, values=payload, error=str(e))
+            body_html = self.view.render(mode="edit", cid=cid, values=payload, error=str(e))
             start_response("400 Bad Request", [("Content-Type", "text/html; charset=utf-8")])
             return [layout("Ошибка валидации", body_html)]

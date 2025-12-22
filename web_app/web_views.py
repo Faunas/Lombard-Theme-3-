@@ -146,73 +146,65 @@ def not_found_view(msg: str = "Not Found") -> bytes:
     return layout("404", f"<h1>404</h1><p>{escape(msg)}</p>")
 
 
+class ClientFormView:
+    """
+    Один «класс окна» для формы клиента.
+    Режимы:
+      - mode='create' -> action=/client/create, пустые поля
+      - mode='edit'   -> action=/client/update, скрытый input id, предзаполненные поля
+    """
 
-def add_client_form(*, values: dict | None = None, error: str | None = None) -> str:
-    v = {
-        "last_name": "", "first_name": "", "middle_name": "",
-        "passport_series": "", "passport_number": "",
-        "birth_date": "", "phone": "", "email": "", "address": "",
-    }
-    if values:
-        for k in v: v[k] = (values.get(k) or "")
+    @staticmethod
+    def _defaults() -> dict:
+        return {
+            "last_name": "", "first_name": "", "middle_name": "",
+            "passport_series": "", "passport_number": "",
+            "birth_date": "", "phone": "", "email": "", "address": "",
+        }
 
-    def esc(x: str) -> str: return escape(x, quote=True)
-    err_html = f'<div style="color:#b00020;margin:8px 0;">⚠ {escape(error)}</div>' if error else ""
+    @staticmethod
+    def _esc(x: str) -> str:
+        return escape(x, quote=True)
 
-    return f"""
-<h1>Новый клиент</h1>
+    def render(
+        self,
+        *,
+        mode: str,                 # 'create' | 'edit'
+        values: dict | None = None,
+        error: str | None = None,
+        cid: int | None = None
+    ) -> str:
+        v = self._defaults()
+        if values:
+            for k in v:
+                v[k] = (values.get(k) or "")
+
+        err_html = f'<div style="color:#b00020;margin:8px 0;">⚠ {escape(error)}</div>' if error else ""
+
+        is_edit = (mode == "edit")
+        title = f"Редактирование клиента #{cid}" if is_edit else "Новый клиент"
+        action = "/client/update" if is_edit else "/client/create"
+        submit_text = "Сохранить изменения" if is_edit else "Сохранить"
+        id_hidden = f'<input type="hidden" name="id" value="{cid}">' if is_edit and cid is not None else ""
+
+        return f"""
+<h1>{escape(title)}</h1>
 {err_html}
-<form method="POST" action="/client/create">
+<form method="POST" action="{action}">
+  {id_hidden}
   <div class="grid">
-    <label>Фамилия<span class="req">*</span><input name="last_name" required value="{esc(v['last_name'])}"></label>
-    <label>Имя<span class="req">*</span><input name="first_name" required value="{esc(v['first_name'])}"></label>
-    <label>Отчество<span class="req">*</span><input name="middle_name" required value="{esc(v['middle_name'])}"></label>
-    <label>Серия паспорта<span class="req">*</span><input name="passport_series" maxlength="4" required value="{esc(v['passport_series'])}"></label>
-    <label>Номер паспорта<span class="req">*</span><input name="passport_number" maxlength="6" required value="{esc(v['passport_number'])}"></label>
-    <label>Дата рождения<span class="req">*</span><input name="birth_date" placeholder="ДД-ММ-ГГГГ" required value="{esc(v['birth_date'])}"></label>
-    <label>Телефон<span class="req">*</span><input name="phone" required value="{esc(v['phone'])}"></label>
-    <label>Email<span class="req">*</span><input name="email" required value="{esc(v['email'])}"></label>
-    <label class="full">Адрес<span class="req">*</span><input name="address" required value="{esc(v['address'])}"></label>
+    <label>Фамилия<span class="req">*</span><input name="last_name" required value="{self._esc(v['last_name'])}"></label>
+    <label>Имя<span class="req">*</span><input name="first_name" required value="{self._esc(v['first_name'])}"></label>
+    <label>Отчество<span class="req">*</span><input name="middle_name" required value="{self._esc(v['middle_name'])}"></label>
+    <label>Серия паспорта<span class="req">*</span><input name="passport_series" maxlength="4" required value="{self._esc(v['passport_series'])}"></label>
+    <label>Номер паспорта<span class="req">*</span><input name="passport_number" maxlength="6" required value="{self._esc(v['passport_number'])}"></label>
+    <label>Дата рождения<span class="req">*</span><input name="birth_date" placeholder="ДД-ММ-ГГГГ" required value="{self._esc(v['birth_date'])}"></label>
+    <label>Телефон<span class="req">*</span><input name="phone" required value="{self._esc(v['phone'])}"></label>
+    <label>Email<span class="req">*</span><input name="email" required value="{self._esc(v['email'])}"></label>
+    <label class="full">Адрес<span class="req">*</span><input name="address" required value="{self._esc(v['address'])}"></label>
   </div>
   <div style="margin-top:12px;">
-    <button type="submit">Сохранить</button>
-    <button type="button" onclick="window.close()">Отмена</button>
-  </div>
-</form>
-"""
-
-
-
-def edit_client_form(cid: int, *, values: dict | None = None, error: str | None = None) -> str:
-    v = {
-        "last_name": "", "first_name": "", "middle_name": "",
-        "passport_series": "", "passport_number": "",
-        "birth_date": "", "phone": "", "email": "", "address": "",
-    }
-    if values:
-        for k in v: v[k] = (values.get(k) or "")
-
-    def esc(x: str) -> str: return escape(x, quote=True)
-    err_html = f'<div style="color:#b00020;margin:8px 0;">⚠ {escape(error)}</div>' if error else ""
-
-    return f"""
-<h1>Редактирование клиента #{cid}</h1>
-{err_html}
-<form method="POST" action="/client/update">
-  <input type="hidden" name="id" value="{cid}">
-  <div class="grid">
-    <label>Фамилия<span class="req">*</span><input name="last_name" required value="{esc(v['last_name'])}"></label>
-    <label>Имя<span class="req">*</span><input name="first_name" required value="{esc(v['first_name'])}"></label>
-    <label>Отчество<span class="req">*</span><input name="middle_name" required value="{esc(v['middle_name'])}"></label>
-    <label>Серия паспорта<span class="req">*</span><input name="passport_series" maxlength="4" required value="{esc(v['passport_series'])}"></label>
-    <label>Номер паспорта<span class="req">*</span><input name="passport_number" maxlength="6" required value="{esc(v['passport_number'])}"></label>
-    <label>Дата рождения<span class="req">*</span><input name="birth_date" placeholder="ДД-ММ-ГГГГ" required value="{esc(v['birth_date'])}"></label>
-    <label>Телефон<span class="req">*</span><input name="phone" required value="{esc(v['phone'])}"></label>
-    <label>Email<span class="req">*</span><input name="email" required value="{esc(v['email'])}"></label>
-    <label class="full">Адрес<span class="req">*</span><input name="address" required value="{esc(v['address'])}"></label>
-  </div>
-  <div style="margin-top:12px;">
-    <button type="submit">Сохранить изменения</button>
+    <button type="submit">{escape(submit_text)}</button>
     <button type="button" onclick="window.close()">Отмена</button>
   </div>
 </form>
