@@ -8,6 +8,7 @@ from observable_repo import ObservableClientsRepo
 from web_controller import MainController
 from web_views import layout
 from add_controller import AddClientController
+from edit_controller import EditClientController
 
 DATA_BACKEND = "db"  # 'db' | 'json' | 'yaml'
 
@@ -52,6 +53,7 @@ def application_factory() -> Tuple[Callable, MainController]:
     repo = make_repo()
     controller = MainController(repo)
     add_ctrl = AddClientController(repo)
+    edit_ctrl = EditClientController(repo)
 
     def app(environ, start_response):
         path = environ.get("PATH_INFO", "/")
@@ -69,6 +71,11 @@ def application_factory() -> Tuple[Callable, MainController]:
             return add_ctrl.add_form(environ, start_response)
         if path == "/client/create":
             return add_ctrl.create(environ, start_response)
+
+        if path == "/client/edit":
+            return edit_ctrl.edit_form(environ, start_response)
+        if path == "/client/update":
+            return edit_ctrl.update(environ, start_response)
 
         if path == "/debug/health":
             try:

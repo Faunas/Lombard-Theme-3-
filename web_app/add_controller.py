@@ -11,8 +11,8 @@ from web_views import layout, add_client_form, success_and_close
 class AddClientController:
     """
     Отдельный контроллер для окна добавления клиента (MVC).
-    GET /client/add    - форма
-    POST /client/create - попытка создания, при успехе закрываем окно и обновляем opener.
+    GET /client/add    -> форма
+    POST /client/create -> попытка создания, при успехе закрываем окно и обновляем opener.
     """
 
     def __init__(self, repo: ObservableClientsRepo) -> None:
@@ -30,7 +30,6 @@ class AddClientController:
 
     @staticmethod
     def _normalize(form: Dict[str, str]) -> Dict[str, Any]:
-        # приводим к полям Client
         return {
             "last_name": form.get("last_name", ""),
             "first_name": form.get("first_name", ""),
@@ -42,6 +41,7 @@ class AddClientController:
             "email": form.get("email", ""),
             "address": form.get("address", ""),
         }
+
 
     def add_form(self, environ, start_response):
         body_html = add_client_form()
@@ -59,7 +59,6 @@ class AddClientController:
             except Exception:
                 pass
 
-            # Отдаём HTML, который пошлёт postMessage главному окну и закроет попап
             body_html = success_and_close(
                 "Клиент успешно добавлен",
                 event_type="client_added",

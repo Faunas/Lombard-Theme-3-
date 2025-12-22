@@ -88,3 +88,14 @@ class ObservableClientsRepo(Subject):
         self, k: int, n: int, *, prefer_contact: str = "phone"
     ) -> list[ClientShort]:
         return self._base.get_k_n_short_list(k, n, prefer_contact=prefer_contact)
+
+    def get_by_id(self, cid: int) -> tuple[Client | None, list[dict[str, Any]]]:
+        """
+        Прямая делегация к базовому репозиторию.
+        Совместимо и с файловыми репо (у них есть allow_raw_fallback), и с DB-адаптером (без него).
+        """
+        try:
+            return self._base.get_by_id(cid, allow_raw_fallback=True)  # файловые репо
+        except TypeError:
+            return self._base.get_by_id(cid)  # DB-адаптер
+
