@@ -7,7 +7,7 @@ from wsgiref.simple_server import make_server
 from observable_repo import ObservableClientsRepo
 from web_controller import MainController
 from web_views import layout
-
+from add_controller import AddClientController
 
 DATA_BACKEND = "db"  # 'db' | 'json' | 'yaml'
 
@@ -24,7 +24,6 @@ JSON_PATH = "clients.json"
 YAML_PATH = "clients.yaml"
 
 
-# ---------- фабрика базового репозитория ----------
 def make_base_repo():
     """
     Возвращает один из репозиториев согласно DATA_BACKEND.
@@ -39,7 +38,6 @@ def make_base_repo():
 
         return ClientsRepYaml(YAML_PATH)
 
-    # по умолчанию json
     from client_rep_json import ClientsRepJson
 
     return ClientsRepJson(JSON_PATH)
@@ -53,6 +51,7 @@ def make_repo() -> ObservableClientsRepo:
 def application_factory() -> Tuple[Callable, MainController]:
     repo = make_repo()
     controller = MainController(repo)
+    add_ctrl = AddClientController(repo)
 
     def app(environ, start_response):
         path = environ.get("PATH_INFO", "/")
@@ -65,6 +64,11 @@ def application_factory() -> Tuple[Callable, MainController]:
 
         if path == "/client/detail":
             return controller.detail(environ, start_response)
+
+        if path == "/client/add":
+            return add_ctrl.add_form(environ, start_response)
+        if path == "/client/create":
+            return add_ctrl.create(environ, start_response)
 
         if path == "/debug/health":
             try:

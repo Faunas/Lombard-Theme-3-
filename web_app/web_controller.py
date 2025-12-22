@@ -39,7 +39,6 @@ class MainController(Observer):
 
     # Routes
     def index(self, environ, start_response) -> list[bytes]:
-        # запрашиваем список; репозиторий при этом сгенерирует событие "list_ready"
         shorts = self.repo.list_all_short(prefer_contact="phone")
         start_response("200 OK", [("Content-Type", "text/html; charset=utf-8")])
         return [index_view(shorts)]
@@ -68,7 +67,6 @@ class MainController(Observer):
             start_response("400 Bad Request", [("Content-Type", "text/html; charset=utf-8")])
             return [not_found_view("Некорректный id")]
 
-        # сначала пробуем взять из кэша, куда нас положил Observer
         c = self._selected_cache.get(cid)
         if not c:
             c, _ = self.repo.get_by_id(cid)
