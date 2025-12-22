@@ -32,7 +32,7 @@ def layout(title: str, body_html: str) -> bytes:
   .grid {{ display:grid; grid-template-columns: repeat(2,minmax(220px,1fr)); gap:10px; }}
   .grid .full {{ grid-column: 1 / -1; }}
   label > span.req {{ color:var(--danger); margin-left:4px; }}
-  input {{ width:100%; padding:6px 8px; box-sizing:border-box; }}
+  input, select {{ width:100%; padding:6px 8px; box-sizing:border-box; }}
   button {{ padding:6px 12px; }}
   .btns > a {{ margin-right: 6px; }}
   .filters {{
@@ -46,6 +46,9 @@ def layout(title: str, body_html: str) -> bytes:
   .flex {{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }}
   .pill {{ display:inline-block; border:1px solid var(--b); padding:4px 8px; border-radius:999px; font-size:12px; }}
   .right {{ margin-left:auto; }}
+  .warnbox {{
+    border:1px solid var(--danger); border-radius:8px; padding:12px; margin:12px 0; background:#fff5f6;
+  }}
 </style>
 </head>
 <body>
@@ -57,7 +60,6 @@ def layout(title: str, body_html: str) -> bytes:
 
 def _esc(x: str | None) -> str:
     return escape(x or "", quote=True)
-
 
 
 class ClientFormView:
@@ -149,6 +151,7 @@ class ClientFormView:
         raise ValueError("mode должен быть 'create' или 'edit'")
 
 
+
 def index_view(
     shorts: Iterable[ClientShort],
     *,
@@ -158,6 +161,7 @@ def index_view(
     page_size: int,
     prev_link: Optional[str],
     next_link: Optional[str],
+    sort: dict[str, str],
     error_msg: Optional[str] = None,
 ) -> bytes:
     rows = []
@@ -178,6 +182,9 @@ def index_view(
         )
 
     err_html = f"<div class='error'>⚠ {escape(error_msg)}</div>" if error_msg else ""
+
+    sb = (sort.get("sb") or "id")
+    sd = (sort.get("sd") or "asc")
 
     body = f"""
 <h1>Клиенты (краткая информация)</h1>
@@ -201,6 +208,21 @@ def index_view(
 
   <div class="row"><span>ДР от (ДД-ММ-ГГГГ)</span><input name="bd_from" value="{_esc(filters.get('bd_from'))}"></div>
   <div class="row"><span>ДР до (ДД-ММ-ГГГГ)</span><input name="bd_to" value="{_esc(filters.get('bd_to'))}"></div>
+
+  <div class="row"><span>Сортировать по</span>
+    <select name="sb">
+      <option value="id" {"selected" if sb=="id" else ""}>ID</option>
+      <option value="last_name" {"selected" if sb=="last_name" else ""}>Фамилия</option>
+      <option value="birth_date" {"selected" if sb=="birth_date" else ""}>Дата рождения</option>
+    </select>
+  </div>
+  <div class="row"><span>Направление</span>
+    <select name="sd">
+      <option value="asc" {"selected" if sd=="asc" else ""}>По возрастанию</option>
+      <option value="desc" {"selected" if sd=="desc" else ""}>По убыванию</option>
+    </select>
+  </div>
+
   <div class="row"><span>Страница</span><input name="k" value="{page}"></div>
   <div class="row"><span>Размер страницы</span><input name="n" value="{page_size}"></div>
 
@@ -310,6 +332,41 @@ def detail_view(c: Client) -> bytes:
 </script>
 """
     return layout("Карточка клиента", body)
+
+
+
+def confirm_delete_view(
+    c: Client | None,
+    *,
+    error: str | None = None,
+    form_action: str = "/client/delete/confirm",
+) -> str:
+    """
+    Окно подтверждения удаления.
+    По умолчанию POST идет на /client/delete/confirm; при желании можно
+    сменить на /client/remove через параметр form_action.
+    """
+    if not c:
+        return f"<h1>Удаление</h1><p class='error'>Клиент не найден.</p>"
+
+    err_html = f'<div class="error">⚠ {escape(error)}</div>' if error else ""
+    fio = f"{c.last_name} {c.first_name} {c.middle_name}".strip()
+    contact = c.phone or c.email or "—"
+
+    return f"""
+<h1>Удалить клиента #{c.id}?</h1>
+<div class="warnbox">
+  <div><b>{escape(fio)}</b></div>
+  <div class="muted">Контакт: {escape(contact)}</div>
+  <div class="muted">Паспорт: {escape(c.passport_series)} {escape(c.passport_number)}</div>
+</div>
+{err_html}
+<form method="POST" action="{escape(form_action)}">
+  <input type="hidden" name="id" value="{c.id}">
+  <button type="submit" class="button danger">Удалить</button>
+  <button type="button" class="button" onclick="window.close()">Отмена</button>
+</form>
+"""
 
 
 def not_found_view(msg: str = "Not Found") -> bytes:

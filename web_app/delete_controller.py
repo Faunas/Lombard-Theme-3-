@@ -18,7 +18,6 @@ class DeleteClientController:
     def __init__(self, repo: ObservableClientsRepo) -> None:
         self.repo = repo
 
-
     @staticmethod
     def _query(environ) -> Dict[str, list[str]]:
         return parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
@@ -32,6 +31,7 @@ class DeleteClientController:
         body = environ["wsgi.input"].read(size).decode("utf-8", errors="ignore")
         parsed = parse_qs(body, keep_blank_values=True)
         return {k: (v[0] if v else "") for k, v in parsed.items()}
+
 
     def confirm(self, environ, start_response):
         q = self._query(environ)
@@ -65,9 +65,7 @@ class DeleteClientController:
             start_response("400 Bad Request", [("Content-Type", "text/html; charset=utf-8")])
             return [layout("Ошибка удаления", body_html)]
 
-        # успех удаления - уведомляем opener и закрываем окно
         try:
-            # опционально дублируем серверное событие
             self.repo.notify("client_deleted", {"id": cid, "ok": True, "errors": []})
         except Exception:
             pass

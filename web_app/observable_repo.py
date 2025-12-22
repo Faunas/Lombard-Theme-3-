@@ -25,35 +25,20 @@ class ObservableClientsRepo(Subject):
         super().__init__()
         self._base = base
 
-    def backend_kind(self) -> str:
-        """
-        Возвращает 'db' или 'file' (json/yaml).
-        """
-        try:
-            from clients_rep_db_adapter import ClientsRepDBAdapter  # type: ignore
-            if isinstance(self._base, ClientsRepDBAdapter):
-                return "db"
-        except Exception:
-            pass
-        return "file"
-
+    # ===== служебные =====
     def base_repo(self) -> BaseClientsRepo:
-        """
-        Возвращает исходный (ненаблюдаемый) репозиторий.
-        Нужен контроллеру, чтобы оборачивать файловый репо в декоратор фильтрации.
-        """
+        """Возвращает исходный (ненаблюдаемый) репозиторий."""
         return self._base
 
+    # ===== Чтение списка для главной (без фильтра) =====
     def list_all_short(self, *, prefer_contact: str = "phone") -> list[ClientShort]:
         """
         Возвращает весь список (short) для таблицы и уведомляет "list_ready".
         """
         try:
-            shorts = self._base.get_k_n_short_list(
-                1, 10**9, prefer_contact=prefer_contact
-            )
+            shorts = self._base.get_k_n_short_list(1, 10**9, prefer_contact=prefer_contact)
         except Exception:
-            ok, _ = self._base.read_all(tolerant=True)
+            ok, _ = self._base.read_all(tolerant=True)  # для файловых репозиториев
             shorts = [
                 ClientShort(self._base.client_to_dict(c), prefer_contact=prefer_contact)
                 for c in ok
@@ -62,6 +47,7 @@ class ObservableClientsRepo(Subject):
         self.notify("list_ready", shorts)
         return shorts
 
+    # ===== Детальная карточка =====
     def select_client(self, cid: int) -> Client:
         """
         Возвращает клиента по id и уведомляет "client_selected".
@@ -78,6 +64,7 @@ class ObservableClientsRepo(Subject):
         self.notify("client_selected", obj)
         return obj
 
+    # ===== CRUD =====
     def add_client(self, data: Client | dict | str, *, pretty: bool = True) -> Client:
         obj = self._base.add_client(data, pretty=pretty)
         self.notify("client_added", obj)
@@ -100,19 +87,40 @@ class ObservableClientsRepo(Subject):
         self.notify("list_ready", self.list_all_short())
         return deleted, errors
 
-    def get_count(self) -> int:
-        return self._base.get_count()
+    # ===== Методы с фильтрацией/сортировкой (важно для ЛР3-6/7) =====
+    def get_count(self, *, filter: Any | None = None) -> int:
+        """
+        Делегирует в базовый репозиторий. Если базовый не поддерживает filter,
+        падаем обратно на вариант без фильтра.
+        """
+        try:
+            return self._base.get_count(filter=filter)  # декораторы ЛР2/БД
+        except TypeError:
+            # Базовый адаптер без фильтра — считаем без него
+            return self._base.get_count()
 
     def get_k_n_short_list(
-        self, k: int, n: int, *, prefer_contact: str = "phone"
+        self,
+        k: int,
+        n: int,
+        *,
+        filter: Any | None = None,
+        sort: Any | None = None,
+        prefer_contact: str = "phone",
     ) -> list[ClientShort]:
-        return self._base.get_k_n_short_list(k, n, prefer_contact=prefer_contact)
+        """
+        Делегирует страницу списка в базовый репо. Если базовый не поддерживает filter/sort,
+        отдаём без них (на практике мы оборачиваем адаптер в декоратор, см. web_app.py).
+        """
+        try:
+            return self._base.get_k_n_short_list(
+                k, n, filter=filter, sort=sort, prefer_contact=prefer_contact
+            )
+        except TypeError:
+            return self._base.get_k_n_short_list(k, n, prefer_contact=prefer_contact)
 
+    # ===== Прокси =====
     def get_by_id(self, cid: int) -> tuple[Client | None, list[dict[str, Any]]]:
-        """
-        Прямая делегация к базовому репозиторию.
-        Совместимо и с файловыми репо (allow_raw_fallback), и с DB-адаптером (без него).
-        """
         try:
             return self._base.get_by_id(cid, allow_raw_fallback=True)
         except TypeError:

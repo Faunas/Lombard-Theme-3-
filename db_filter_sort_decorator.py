@@ -1,7 +1,9 @@
+# db_filter_sort_decorator.py
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
+from client import Client
 from client_short import ClientShort
 from clients_rep_db_adapter import ClientsRepDBAdapter
 from db_singleton import PgDB
@@ -26,14 +28,15 @@ class ClientFilter:
 
 @dataclass
 class SortSpec:
-    by: str = "id"  # id | last_name | birth_date (строго из белого списка)
+    by: str = "id"           # id | last_name | birth_date (строго из белого списка)
     asc: bool = True
 
 
 class ClientsRepDBFilterSortDecorator:
     """
-    Декоратор, добавляющий фильтрацию и сортировку к методам get_k_n_short_list и get_count
-    для работы с БД (через PgDB Singleton). Поддерживает совместимость с адаптером.
+    Декоратор, добавляющий фильтрацию и сортировку к get_k_n_short_list/get_count
+    при работе с БД (через PgDB). Для совместимости с остальным кодом ПРОКСИРУЕТ
+    все остальные операции базовому репозиторию (get_by_id/replace_by_id/...).
     """
 
     _ALLOWED_SORT = {
@@ -44,12 +47,49 @@ class ClientsRepDBFilterSortDecorator:
 
     def __init__(self, base_db_repo: Any = None) -> None:
         """
-        base_db_repo — «декорируемый» объект (ClientsRepDBAdapter). Мы храним ссылку
-        для совместимости паттерна Декоратор, но выполняем SQL напрямую.
+        base_db_repo — обычно ClientsRepDBAdapter. Декоратор не меняет объект,
+        а лишь берёт на себя методы списка/счётчика.
         """
         self._base = base_db_repo
 
-    # --- утилиты преобразования дат ---
+    def get_by_id(
+        self,
+        target_id: int,
+        *,
+        allow_raw_fallback: bool = True,
+    ) -> tuple[Client | None, list[dict[str, Any]]]:
+        return self._base.get_by_id(target_id, allow_raw_fallback=allow_raw_fallback)
+
+    def replace_by_id(
+        self,
+        target_id: int,
+        data: Client | dict | str,
+        *,
+        pretty: bool = True,
+    ) -> Client:
+        return self._base.replace_by_id(target_id, data, pretty=pretty)
+
+    def add_client(
+        self,
+        data: Client | dict | str,
+        *,
+        pretty: bool = True,
+    ) -> Client:
+        return self._base.add_client(data, pretty=pretty)
+
+    def delete_by_id(
+        self,
+        target_id: int,
+        *,
+        pretty: bool = True,
+    ) -> tuple[Client | None, list[dict[str, Any]]]:
+        return self._base.delete_by_id(target_id, pretty=pretty)
+
+    def get_count_plain(self) -> int:
+        """На случай если где-то вызывается get_count без фильтра — отдаём базовый."""
+        return self._base.get_count()
+
+    # ---------- утилиты преобразования дат ----------
 
     @staticmethod
     def _to_date(s: str | None) -> date | None:
@@ -61,7 +101,7 @@ class ClientsRepDBFilterSortDecorator:
     def _date_to_dd_mm_yyyy(d: date | None) -> str | None:
         return d.strftime("%d-%m-%Y") if d else None
 
-    # --- построение SQL фрагментов ---
+    # ---------- построение SQL фрагментов ----------
 
     def _build_where(self, flt: ClientFilter | None) -> tuple[str, list[Any]]:
         if not flt:
@@ -89,7 +129,7 @@ class ClientsRepDBFilterSortDecorator:
             conds.append("TRIM(passport_number) = %s")
             params.append(flt.passport_number)
 
-        # диапазон дат
+        # диапазон дат (birth_date в БД — date)
         d_from = self._to_date(flt.birth_date_from)
         d_to = self._to_date(flt.birth_date_to)
 
@@ -115,14 +155,14 @@ class ClientsRepDBFilterSortDecorator:
         direction = "ASC" if sort.asc else "DESC"
         return f"ORDER BY {col} {direction}"
 
-    # --- публичные методы по заданию ---
+    # ---------- публичные методы с фильтрацией/сортировкой ----------
 
-    def get_k_n_short_list(  # noqa: A003  (метод допускает имя из задания)
+    def get_k_n_short_list(  # noqa: A003 (имя из задания)
         self,
         k: int,
         n: int,
         *,
-        filter: ClientFilter | None = None,  # noqa: A001  (перекрывает builtin)
+        filter: ClientFilter | None = None,  # noqa: A001
         sort: SortSpec | None = None,
         prefer_contact: str = "phone",
     ) -> list[ClientShort]:
@@ -184,7 +224,7 @@ class ClientsRepDBFilterSortDecorator:
 
 
 if __name__ == "__main__":
-    # 1) Инициализируем соединение (Singleton)
+    # 1) Инициализация соединения (Singleton)
     PgDB.init(
         host="127.0.0.1",
         port=5432,
@@ -193,34 +233,14 @@ if __name__ == "__main__":
         password="123",
     )
 
-    # 2) создаём базовый адаптер (для совместимости концепции декоратора)
+    # 2) базовый адаптер и декоратор
     base = ClientsRepDBAdapter()
-
-    # 3) оборачиваем в декоратор с фильтрацией/сортировкой
     repo = ClientsRepDBFilterSortDecorator(base)
 
-    # Примеры фильтров/сортировок
-    flt1 = ClientFilter(last_name_substr="ов")  # фамилии, содержащие "ов"
-    sort1 = SortSpec(by="last_name", asc=True)
-
-    print("== Пример 1: Фамилия содержит 'ов', сортировка по last_name ASC ==")
-    page = repo.get_k_n_short_list(1, 5, filter=flt1, sort=sort1, prefer_contact="email")
+    # 3) примеры
+    flt = ClientFilter(last_name_substr="ов")
+    sort = SortSpec(by="last_name", asc=True)
+    page = repo.get_k_n_short_list(1, 5, filter=flt, sort=sort, prefer_contact="email")
     for s in page:
         print("-", s)
-    print("count:", repo.get_count(filter=flt1))
-
-    flt2 = ClientFilter(birth_date_from="01-01-1980", birth_date_to="31-12-2000")
-    sort2 = SortSpec(by="birth_date", asc=False)
-
-    print("\n== Пример 2: ДР 1980..2000, сортировка по birth_date DESC ==")
-    page2 = repo.get_k_n_short_list(1, 5, filter=flt2, sort=sort2)
-    for s in page2:
-        print("-", s)
-    print("count:", repo.get_count(filter=flt2))
-
-    flt3 = ClientFilter(passport_series="1234")  # точная серия паспорта
-    print("\n== Пример 3: Серия паспорта 1234, сортировка по id ASC ==")
-    page3 = repo.get_k_n_short_list(1, 10, filter=flt3)
-    for s in page3:
-        print("-", s)
-    print("count:", repo.get_count(filter=flt3))
+    print("count:", repo.get_count(filter=flt))

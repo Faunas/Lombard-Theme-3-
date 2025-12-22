@@ -1,21 +1,56 @@
 # web_controller.py
 from __future__ import annotations
-from typing import Any
+from typing import Callable, Tuple, Any, Dict, Optional
 from urllib.parse import parse_qs, urlencode
 
 from mvc_observer import Observer
 from observable_repo import ObservableClientsRepo
-from web_views import index_view, detail_view, not_found_view
+from web_views import (
+    index_view,
+    detail_view,
+    not_found_view,
+)
 from client import Client
+
+# Фабрика "наблюдаемого" репозитория с поддержкой фильтра/сортировки (через DB-декоратор)
+# Если захочешь подключить файлы (JSON/YAML), логика аналогичная — свой декоратор из ЛР2 для файлов.
+from db_filter_sort_decorator import ClientsRepDBFilterSortDecorator, ClientFilter, SortSpec
+from clients_rep_db_adapter import ClientsRepDBAdapter
+
+
+DATA_BACKEND = "db"  # 'db' | потенциально 'json' / 'yaml' если добавишь позже
+
+DB_CONFIG = {
+    "host": "127.0.0.1",
+    "port": 5432,
+    "dbname": "lucky_db",
+    "user": "postgres",
+    "password": "123",
+    "auto_migrate": True,
+}
+
+
+class FilteredRepoFactory:
+    """
+    Возвращает Observable-репозиторий, внутри которого DB-репозиторий
+    обёрнут декоратором фильтра/сортировки из ЛР2.
+    """
+    @staticmethod
+    def make() -> ObservableClientsRepo:
+        if DATA_BACKEND == "db":
+            base = ClientsRepDBAdapter(**DB_CONFIG)
+            filtered = ClientsRepDBFilterSortDecorator(base)
+            return ObservableClientsRepo(filtered)
+        base = ClientsRepDBAdapter(**DB_CONFIG)
+        filtered = ClientsRepDBFilterSortDecorator(base)
+        return ObservableClientsRepo(filtered)
 
 
 class MainController(Observer):
     """
-    Вся логика в контроллере.
-    View — только отрисовка, Model — репозиторий + сущности.
+    Вся логика в контроллере (MVC).
+    View — только рендер, Model — репозиторий + сущности.
     Контроллер подписан на события репозитория (Observer).
-    Теперь контроллер также собирает фильтр из query-параметров и дергает
-    соответствующий декоратор (DB или файловый) для получения страницы списка.
     """
 
     def __init__(self, repo: ObservableClientsRepo) -> None:
@@ -23,190 +58,137 @@ class MainController(Observer):
         self.repo.attach(self)
         self._selected_cache: dict[int, Client] = {}
 
-    # Observer API
+    # ===== Observer =====
     def update(self, event: str, payload: Any) -> None:
         if event == "client_selected" and isinstance(payload, Client):
             if payload.id is not None:
                 self._selected_cache[payload.id] = payload
 
+    # ===== helpers =====
     @staticmethod
     def _query(environ) -> dict[str, list[str]]:
-        qs = environ.get("QUERY_STRING", "")
-        return parse_qs(qs, keep_blank_values=True)
+        return parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
 
     @staticmethod
-    def _redirect(start_response, location: str) -> list[bytes]:
-        start_response("302 Found", [("Location", location)])
-        return [b""]
+    def _first(params: dict[str, list[str]], key: str, default: str = "") -> str:
+        return (params.get(key, [default]) or [default])[0]
 
     @staticmethod
-    def _q_get(q: dict[str, list[str]], key: str, default: str = "") -> str:
-        return (q.get(key, [default]) or [default])[0]
-
-    @staticmethod
-    def _safe_int(s: str, default: int) -> int:
+    def _to_int(val: str, default: int) -> int:
         try:
-            v = int(s)
+            v = int(val)
             return v if v > 0 else default
         except Exception:
             return default
 
-    def _make_filter(self, backend: str, q: dict[str, list[str]]):
+    @staticmethod
+    def _build_link(base_path: str, params: dict[str, str]) -> str:
+        clean = {k: v for k, v in params.items() if v not in (None, "", [])}
+        return f"{base_path}?{urlencode(clean)}" if clean else base_path
+
+    def _parse_filters(self, q: dict[str, list[str]]) -> tuple[ClientFilter, dict[str, str], str]:
         """
-        backend: 'db' | 'file'
         Возвращает:
-          - экземпляр ClientFilter (или FileClientFilter),
-          - словарь echo-значений для view (для заполнения формы),
+          - объект ClientFilter (для БД-декоратора),
+          - "плоский" dict (для обратной подстановки в форму),
+          - prefer_contact ('phone'|'email') для ClientShort.
         """
-        vals = {
-            "ln": self._q_get(q, "ln"),
-            "fn": self._q_get(q, "fn"),
-            "mn": self._q_get(q, "mn"),
-            "ph": self._q_get(q, "ph"),
-            "em": self._q_get(q, "em"),
-            "ps": self._q_get(q, "ps"),
-            "pn": self._q_get(q, "pn"),
-            "bd_from": self._q_get(q, "bd_from"),
-            "bd_to": self._q_get(q, "bd_to"),
-            "contact": self._q_get(q, "contact", "phone"),
+        filters_ui: dict[str, str] = {
+            "ln": self._first(q, "ln"),         # last_name_substr
+            "fn": self._first(q, "fn"),         # first_name_substr
+            "mn": self._first(q, "mn"),         # middle_name_substr
+            "ph": self._first(q, "ph"),         # phone_substr
+            "em": self._first(q, "em"),         # email_substr
+            "ps": self._first(q, "ps"),         # passport_series (=)
+            "pn": self._first(q, "pn"),         # passport_number (=)
+            "bd_from": self._first(q, "bd_from"),
+            "bd_to": self._first(q, "bd_to"),
+            "contact": self._first(q, "contact") or "phone",
         }
 
-        def nz(s: str) -> str | None:
-            s = (s or "").strip()
-            return s if s else None
+        flt = ClientFilter(
+            last_name_substr=filters_ui["ln"] or None,
+            first_name_substr=filters_ui["fn"] or None,
+            middle_name_substr=filters_ui["mn"] or None,
+            phone_substr=filters_ui["ph"] or None,
+            email_substr=filters_ui["em"] or None,
+            passport_series=filters_ui["ps"] or None,
+            passport_number=filters_ui["pn"] or None,
+            birth_date_from=filters_ui["bd_from"] or None,
+            birth_date_to=filters_ui["bd_to"] or None,
+        )
 
-        if backend == "db":
-            from db_filter_sort_decorator import ClientFilter
-            flt = ClientFilter(
-                last_name_substr=nz(vals["ln"]),
-                first_name_substr=nz(vals["fn"]),
-                middle_name_substr=nz(vals["mn"]),
-                phone_substr=nz(vals["ph"]),
-                email_substr=nz(vals["em"]),
-                passport_series=nz(vals["ps"]),
-                passport_number=nz(vals["pn"]),
-                birth_date_from=nz(vals["bd_from"]),
-                birth_date_to=nz(vals["bd_to"]),
-            )
-        else:
-            from file_filter_sort_decorator import FileClientFilter
-            flt = FileClientFilter(
-                last_name_substr=nz(vals["ln"]),
-                first_name_substr=nz(vals["fn"]),
-                middle_name_substr=nz(vals["mn"]),
-                phone_substr=nz(vals["ph"]),
-                email_substr=nz(vals["em"]),
-                passport_series=nz(vals["ps"]),
-                passport_number=nz(vals["pn"]),
-                birth_date_from=nz(vals["bd_from"]),
-                birth_date_to=nz(vals["bd_to"]),
-            )
+        prefer_contact = "email" if (filters_ui["contact"] or "").lower() == "email" else "phone"
+        return flt, filters_ui, prefer_contact
 
-        return flt, vals
-
-    def _apply_filter_and_page(
-        self,
-        backend: str,
-        k: int,
-        n: int,
-        flt_obj,
-        prefer_contact: str = "phone",
-    ):
+    def _parse_sort(self, q: dict[str, list[str]]) -> tuple[SortSpec, dict[str, str]]:
         """
-        Вызывает соответствующий декоратор (DB или файловый) и возвращает (shorts, total_count).
+        Читает sb (sort_by) и sd (sort_dir) из query string.
+        Допустимые поля: id | last_name | birth_date
+        Направление: asc | desc
         """
-        if backend == "db":
-            from db_filter_sort_decorator import ClientsRepDBFilterSortDecorator
-            deco = ClientsRepDBFilterSortDecorator(base_db_repo=self.repo.base_repo())
-            shorts = deco.get_k_n_short_list(k, n, filter=flt_obj, sort=None, prefer_contact=prefer_contact)
-            total = deco.get_count(filter=flt_obj)
-            return shorts, total
+        allowed_cols = {"id", "last_name", "birth_date"}
+        by = self._first(q, "sb") or "id"
+        if by not in allowed_cols:
+            by = "id"
 
-        from file_filter_sort_decorator import ClientsRepFileFilterSortDecorator
-        deco = ClientsRepFileFilterSortDecorator(self.repo.base_repo())
-        shorts = deco.get_k_n_short_list(k, n, filter=flt_obj, sort=None, prefer_contact=prefer_contact)
-        total = deco.get_count(filter=flt_obj)
-        return shorts, total
+        dir_raw = (self._first(q, "sd") or "asc").lower()
+        asc = False if dir_raw == "desc" else True
 
-    @staticmethod
-    def _filters_to_query(filters: dict[str, str], *, include_page: bool = False, k: int = 1, n: int = 20) -> str:
-        """
-        Собирает query-строку из значений фильтра (пустые не включаем).
-        Если include_page=True — добавляем k/n.
-        """
-        data: dict[str, str] = {}
-        for key in ("ln", "fn", "mn", "ph", "em", "ps", "pn", "bd_from", "bd_to", "contact"):
-            v = (filters.get(key) or "").strip()
-            if v:
-                data[key] = v
-        if include_page:
-            data["k"] = str(k)
-            data["n"] = str(n)
-        return urlencode(data, doseq=False)
+        ui = {"sb": by, "sd": "desc" if not asc else "asc"}
+        return SortSpec(by=by, asc=asc), ui
 
+    # ===== маршруты =====
     def index(self, environ, start_response) -> list[bytes]:
-        """
-        Теперь index обрабатывает фильтры:
-          GET-параметры (query):
-            ln, fn, mn, ph, em, ps, pn, bd_from, bd_to, contact
-            k, n  — пагинация
-        """
         q = self._query(environ)
-        backend = self.repo.backend_kind()
 
         # пагинация
-        k = self._safe_int(self._q_get(q, "k", "1"), 1)
-        n = self._safe_int(self._q_get(q, "n", "20"), 20)
-        if n > 200:
-            n = 200
+        page = self._to_int(self._first(q, "k"), 1)
+        per_page = self._to_int(self._first(q, "n"), 10)
 
-        error_msg: str | None = None
+        # фильтры и сортировка
+        flt, filters_ui, prefer_contact = self._parse_filters(q)
+        sort_spec, sort_ui = self._parse_sort(q)
 
-        try:
-            flt_obj, echo_vals = self._make_filter(backend, q)
-            prefer_contact = echo_vals.get("contact") or "phone"
-            shorts, total = self._apply_filter_and_page(backend, k, n, flt_obj, prefer_contact=prefer_contact)
-        except Exception as e:
-            error_msg = str(e)
-            echo_vals = {
-                "ln": self._q_get(q, "ln"),
-                "fn": self._q_get(q, "fn"),
-                "mn": self._q_get(q, "mn"),
-                "ph": self._q_get(q, "ph"),
-                "em": self._q_get(q, "em"),
-                "ps": self._q_get(q, "ps"),
-                "pn": self._q_get(q, "pn"),
-                "bd_from": self._q_get(q, "bd_from"),
-                "bd_to": self._q_get(q, "bd_to"),
-                "contact": self._q_get(q, "contact", "phone"),
-            }
-            shorts = []
-            total = 0
+        # общее число по фильтру
+        total = self.repo.get_count(filter=flt)
 
-        base_q = self._filters_to_query(echo_vals, include_page=False)
+        # вытаскиваем нужную страницу
+        shorts = self.repo.get_k_n_short_list(
+            page, per_page, filter=flt, sort=sort_spec, prefer_contact=prefer_contact
+        )
+
+        # соберём ссылки для пагинации, сохраняя фильтры и сорт
+        base_params = {
+            **filters_ui,
+            **sort_ui,
+            "contact": filters_ui["contact"] or "phone",
+            "n": str(per_page),
+        }
         prev_link = None
         next_link = None
-        if k > 1:
-            prev_link = "/?" + self._filters_to_query(echo_vals, include_page=True, k=k - 1, n=n)
-        if (k - 1) * n + len(shorts) < total:
-            next_link = "/?" + self._filters_to_query(echo_vals, include_page=True, k=k + 1, n=n)
+        if page > 1:
+            prev_link = self._build_link("/", {**base_params, "k": str(page - 1)})
+        if page * per_page < total:
+            next_link = self._build_link("/", {**base_params, "k": str(page + 1)})
 
         start_response("200 OK", [("Content-Type", "text/html; charset=utf-8")])
         return [index_view(
-            shorts=shorts,
-            filters=echo_vals,
+            shorts,
+            filters=filters_ui,
             total=total,
-            page=k,
-            page_size=n,
+            page=page,
+            page_size=per_page,
             prev_link=prev_link,
             next_link=next_link,
-            error_msg=error_msg,
+            sort=sort_ui,
+            error_msg=None,
         )]
 
     def select(self, environ, start_response) -> list[bytes]:
         q = self._query(environ)
         try:
-            cid = int(self._q_get(q, "id"))
+            cid = int(self._first(q, "id"))
         except Exception:
             start_response("400 Bad Request", [("Content-Type", "text/html; charset=utf-8")])
             return [not_found_view("Некорректный id")]
@@ -217,12 +199,13 @@ class MainController(Observer):
             start_response("404 Not Found", [("Content-Type", "text/html; charset=utf-8")])
             return [not_found_view(str(e))]
 
-        return self._redirect(start_response, f"/client/detail?id={cid}")
+        start_response("302 Found", [("Location", f"/client/detail?id={cid}")])
+        return [b""]
 
     def detail(self, environ, start_response) -> list[bytes]:
         q = self._query(environ)
         try:
-            cid = int(self._q_get(q, "id"))
+            cid = int(self._first(q, "id"))
         except Exception:
             start_response("400 Bad Request", [("Content-Type", "text/html; charset=utf-8")])
             return [not_found_view("Некорректный id")]

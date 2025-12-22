@@ -7,9 +7,13 @@ from wsgiref.simple_server import make_server
 from observable_repo import ObservableClientsRepo
 from web_controller import MainController
 from web_views import layout
+
+# CRUD контроллеры
 from add_controller import AddClientController
 from edit_controller import EditClientController
+from delete_controller import DeleteClientController  # если у тебя уже есть файл удаления
 
+# Источник данных
 DATA_BACKEND = "db"  # 'db' | 'json' | 'yaml'
 
 DB_CONFIG = {
@@ -30,28 +34,42 @@ def make_base_repo():
     Возвращает один из репозиториев согласно DATA_BACKEND.
     """
     if DATA_BACKEND == "db":
-        # инициализируем PgDB для работы декоратора фильтрации
-        try:
-            from db_singleton import PgDB
-            PgDB.init(**DB_CONFIG)
-        except Exception:
-            pass
-
         from clients_rep_db_adapter import ClientsRepDBAdapter
+
         return ClientsRepDBAdapter(**DB_CONFIG)
 
     if DATA_BACKEND == "yaml":
         from clients_rep_yaml import ClientsRepYaml
+
         return ClientsRepYaml(YAML_PATH)
 
     # по умолчанию json
     from client_rep_json import ClientsRepJson
+
     return ClientsRepJson(JSON_PATH)
 
 
 def make_repo() -> ObservableClientsRepo:
+    """
+    Возвращает Observable-репозиторий.
+    ВАЖНО: здесь же оборачиваем базовый репозиторий в декоратор фильтрации/сортировки,
+    чтобы методы get_count()/get_k_n_short_list() принимали filter/sort.
+    """
     base = make_base_repo()
-    return ObservableClientsRepo(base)
+
+    # Для БД — декоратор из ЛР2
+    if DATA_BACKEND == "db":
+        from db_filter_sort_decorator import ClientsRepDBFilterSortDecorator
+
+        filtered = ClientsRepDBFilterSortDecorator(base)
+        return ObservableClientsRepo(filtered)
+
+    try:
+        from file_filter_sort_decorator import ClientsRepFileFilterSortDecorator
+        filtered = ClientsRepFileFilterSortDecorator(base)
+        return ObservableClientsRepo(filtered)
+    except Exception:
+        return ObservableClientsRepo(base)
 
 
 def application_factory() -> Tuple[Callable, MainController]:
@@ -59,6 +77,7 @@ def application_factory() -> Tuple[Callable, MainController]:
     controller = MainController(repo)
     add_ctrl = AddClientController(repo)
     edit_ctrl = EditClientController(repo)
+    del_ctrl = DeleteClientController(repo)
 
     def app(environ, start_response):
         path = environ.get("PATH_INFO", "/")
@@ -72,15 +91,23 @@ def application_factory() -> Tuple[Callable, MainController]:
         if path == "/client/detail":
             return controller.detail(environ, start_response)
 
+        # Добавление
         if path == "/client/add":
             return add_ctrl.add_form(environ, start_response)
         if path == "/client/create":
             return add_ctrl.create(environ, start_response)
 
+        # Редактирование
         if path == "/client/edit":
             return edit_ctrl.edit_form(environ, start_response)
         if path == "/client/update":
             return edit_ctrl.update(environ, start_response)
+
+        # Удаление
+        if path == "/client/delete":
+            return del_ctrl.confirm(environ, start_response)
+        if path == "/client/delete/confirm":
+            return del_ctrl.do_delete(environ, start_response)
 
         if path == "/debug/health":
             try:
