@@ -11,7 +11,8 @@ from web_views import layout
 # CRUD контроллеры
 from add_controller import AddClientController
 from edit_controller import EditClientController
-from delete_controller import DeleteClientController  # если у тебя уже есть файл удаления
+from delete_controller import DeleteClientController
+from contracts_lite_controller import ContractsLiteController
 
 # Источник данных
 DATA_BACKEND = "db"  # 'db' | 'json' | 'yaml'
@@ -29,6 +30,7 @@ JSON_PATH = "clients.json"
 YAML_PATH = "clients.yaml"
 
 
+# ---------- фабрика базового репозитория ----------
 def make_base_repo():
     """
     Возвращает один из репозиториев согласно DATA_BACKEND.
@@ -61,14 +63,16 @@ def make_repo() -> ObservableClientsRepo:
     if DATA_BACKEND == "db":
         from db_filter_sort_decorator import ClientsRepDBFilterSortDecorator
 
-        filtered = ClientsRepDBFilterSortDecorator(base)
-        return ObservableClientsRepo(filtered)
+        filtered = ClientsRepDBFilterSortDecorator(base)  # type: ignore[arg-type]
+        return ObservableClientsRepo(filtered)  # type: ignore[arg-type]
 
+    # Для файловых источников можно подключить свой файловый декоратор (если он у тебя есть)
     try:
-        from file_filter_sort_decorator import ClientsRepFileFilterSortDecorator
-        filtered = ClientsRepFileFilterSortDecorator(base)
-        return ObservableClientsRepo(filtered)
+        from file_filter_sort_decorator import ClientsRepFileFilterSortDecorator  # type: ignore
+        filtered = ClientsRepFileFilterSortDecorator(base)  # type: ignore[arg-type]
+        return ObservableClientsRepo(filtered)  # type: ignore[arg-type]
     except Exception:
+        # Файловый декоратор отсутствует — работаем без фильтра/сортировки
         return ObservableClientsRepo(base)
 
 
@@ -78,6 +82,7 @@ def application_factory() -> Tuple[Callable, MainController]:
     add_ctrl = AddClientController(repo)
     edit_ctrl = EditClientController(repo)
     del_ctrl = DeleteClientController(repo)
+    contracts_ctrl = ContractsLiteController()
 
     def app(environ, start_response):
         path = environ.get("PATH_INFO", "/")
@@ -109,6 +114,26 @@ def application_factory() -> Tuple[Callable, MainController]:
         if path == "/client/delete/confirm":
             return del_ctrl.do_delete(environ, start_response)
 
+        # Договоры (Lite)
+        if path == "/contracts":
+            return contracts_ctrl.index(environ, start_response)
+        if path == "/contract/detail":
+            return contracts_ctrl.detail(environ, start_response)
+
+        if path == "/contract/add":
+            return contracts_ctrl.add_form(environ, start_response)
+        if path == "/contract/create":
+            return contracts_ctrl.create(environ, start_response)
+        if path == "/contract/edit":
+            return contracts_ctrl.edit_form(environ, start_response)
+        if path == "/contract/update":
+            return contracts_ctrl.update(environ, start_response)
+        if path == "/contract/close":
+            return contracts_ctrl.close_form(environ, start_response)
+        if path == "/contract/close/do":
+            return contracts_ctrl.close_do(environ, start_response)
+
+        # Простой “healthcheck”
         if path == "/debug/health":
             try:
                 shorts = repo.list_all_short(prefer_contact="phone")

@@ -20,5 +20,6 @@ class Subject:
             self._observers.remove(obs)
 
     def notify(self, event: str, payload: Any) -> None:
+        # перебираем snapshot (list(...)), чтобы можно было отписаться в процессе
         for obs in list(self._observers):
             obs.update(event, payload)

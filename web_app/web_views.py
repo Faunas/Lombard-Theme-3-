@@ -8,6 +8,7 @@ from client_short import ClientShort
 from client import Client
 
 
+# ===================== БАЗОВЫЙ LAYOUT =====================
 
 def layout(title: str, body_html: str) -> bytes:
     html = f"""<!doctype html>
@@ -61,6 +62,8 @@ def layout(title: str, body_html: str) -> bytes:
 def _esc(x: str | None) -> str:
     return escape(x or "", quote=True)
 
+
+# ===================== ЕДИНЫЙ КЛАСС ФОРМЫ (create/edit) =====================
 
 class ClientFormView:
     """
@@ -151,6 +154,7 @@ class ClientFormView:
         raise ValueError("mode должен быть 'create' или 'edit'")
 
 
+# ===================== СПИСОК (фильтры + сортировка + пагинация) =====================
 
 def index_view(
     shorts: Iterable[ClientShort],
@@ -161,7 +165,7 @@ def index_view(
     page_size: int,
     prev_link: Optional[str],
     next_link: Optional[str],
-    sort: dict[str, str],
+    sort: dict[str, str],            # {'sb': 'id|last_name|birth_date', 'sd': 'asc|desc'}
     error_msg: Optional[str] = None,
 ) -> bytes:
     rows = []
@@ -183,11 +187,17 @@ def index_view(
 
     err_html = f"<div class='error'>⚠ {escape(error_msg)}</div>" if error_msg else ""
 
+    # UI сортировки
     sb = (sort.get("sb") or "id")
     sd = (sort.get("sd") or "asc")
 
     body = f"""
 <h1>Клиенты (краткая информация)</h1>
+
+<!-- Кнопка перехода в раздел контрактов -->
+<p style="margin: 8px 0 16px;">
+  <a class="button" href="/contracts">Контракты</a>
+</p>
 
 <form method="GET" action="/" class="filters">
   <div class="row"><span>Фамилия (подстрока)</span><input name="ln" value="{_esc(filters.get('ln'))}"></div>
@@ -287,6 +297,8 @@ def index_view(
 
 
 
+# ===================== ДЕТАЛЬНАЯ КАРТОЧКА =====================
+
 def detail_view(c: Client) -> bytes:
     body = f"""
 <h1>Карточка клиента</h1>
@@ -334,6 +346,7 @@ def detail_view(c: Client) -> bytes:
     return layout("Карточка клиента", body)
 
 
+# ===================== ПОДТВЕРЖДЕНИЕ УДАЛЕНИЯ =====================
 
 def confirm_delete_view(
     c: Client | None,
@@ -368,6 +381,8 @@ def confirm_delete_view(
 </form>
 """
 
+
+# ===================== СТАТИЧНЫЕ ВЬЮ =====================
 
 def not_found_view(msg: str = "Not Found") -> bytes:
     return layout("404", f"<h1>404</h1><p>{escape(msg)}</p>")

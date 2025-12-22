@@ -19,6 +19,8 @@ class AddClientController:
         self.repo = repo
         self.view = ClientFormView()
 
+    # --- helpers ---
+
     @staticmethod
     def _read_post(environ) -> Dict[str, str]:
         try:
@@ -43,6 +45,7 @@ class AddClientController:
             "address": form.get("address", ""),
         }
 
+    # --- actions ---
 
     def add_form(self, environ, start_response):
         body_html = self.view.render(mode="create")
@@ -54,9 +57,9 @@ class AddClientController:
         payload = self._normalize(form)
 
         try:
-            created = self.repo.add_client(payload)  # валидация внутри Client
+            created = self.repo.add_client(payload)  # валидация внутри Client(...)
             try:
-                self.repo.notify("client_added", created)
+                self.repo.notify("client_added", created)  # опциональное серверное событие
             except Exception:
                 pass
 

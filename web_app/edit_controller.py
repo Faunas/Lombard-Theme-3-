@@ -19,6 +19,8 @@ class EditClientController:
         self.repo = repo
         self.view = ClientFormView()
 
+    # --- helpers ---
+
     @staticmethod
     def _query(environ) -> Dict[str, list[str]]:
         return parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
@@ -47,6 +49,7 @@ class EditClientController:
             "address": form.get("address", ""),
         }
 
+    # --- actions ---
 
     def edit_form(self, environ, start_response):
         q = self._query(environ)

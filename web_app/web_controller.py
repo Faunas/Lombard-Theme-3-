@@ -18,6 +18,7 @@ from db_filter_sort_decorator import ClientsRepDBFilterSortDecorator, ClientFilt
 from clients_rep_db_adapter import ClientsRepDBAdapter
 
 
+# ---------- настройки источника данных ----------
 DATA_BACKEND = "db"  # 'db' | потенциально 'json' / 'yaml' если добавишь позже
 
 DB_CONFIG = {
@@ -39,8 +40,9 @@ class FilteredRepoFactory:
     def make() -> ObservableClientsRepo:
         if DATA_BACKEND == "db":
             base = ClientsRepDBAdapter(**DB_CONFIG)
-            filtered = ClientsRepDBFilterSortDecorator(base)
+            filtered = ClientsRepDBFilterSortDecorator(base)  # декоратор (ЛР2)
             return ObservableClientsRepo(filtered)
+        # При желании можно добавить ветки 'json'/'yaml' и свой файловый декоратор из ЛР2.
         base = ClientsRepDBAdapter(**DB_CONFIG)
         filtered = ClientsRepDBFilterSortDecorator(base)
         return ObservableClientsRepo(filtered)
@@ -56,6 +58,7 @@ class MainController(Observer):
     def __init__(self, repo: ObservableClientsRepo) -> None:
         self.repo = repo
         self.repo.attach(self)
+        # кэш для детальной карточки
         self._selected_cache: dict[int, Client] = {}
 
     # ===== Observer =====
@@ -83,9 +86,11 @@ class MainController(Observer):
 
     @staticmethod
     def _build_link(base_path: str, params: dict[str, str]) -> str:
+        # фильтруем пустые значения, чтобы URL были аккуратнее
         clean = {k: v for k, v in params.items() if v not in (None, "", [])}
         return f"{base_path}?{urlencode(clean)}" if clean else base_path
 
+    # ===== парсинг фильтров из строки запроса =====
     def _parse_filters(self, q: dict[str, list[str]]) -> tuple[ClientFilter, dict[str, str], str]:
         """
         Возвращает:
@@ -121,6 +126,7 @@ class MainController(Observer):
         prefer_contact = "email" if (filters_ui["contact"] or "").lower() == "email" else "phone"
         return flt, filters_ui, prefer_contact
 
+    # ===== парсинг сортировки =====
     def _parse_sort(self, q: dict[str, list[str]]) -> tuple[SortSpec, dict[str, str]]:
         """
         Читает sb (sort_by) и sd (sort_dir) из query string.
@@ -181,7 +187,7 @@ class MainController(Observer):
             page_size=per_page,
             prev_link=prev_link,
             next_link=next_link,
-            sort=sort_ui,
+            sort=sort_ui,                 # ВАЖНО: прокидываем текущую сортировку в вью
             error_msg=None,
         )]
 
@@ -199,6 +205,7 @@ class MainController(Observer):
             start_response("404 Not Found", [("Content-Type", "text/html; charset=utf-8")])
             return [not_found_view(str(e))]
 
+        # редиректим на детальную карточку (откроется в новой вкладке)
         start_response("302 Found", [("Location", f"/client/detail?id={cid}")])
         return [b""]
 
