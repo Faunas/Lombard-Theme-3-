@@ -1,0 +1,119 @@
+0) “ECHO / SPOOL” аналог в PostgreSQL (psql)
+В PostgreSQL обычно работают через psql. Аналоги:
+-- В psql:
+\set ECHO all          -- печатать вводимые команды (аналог set echo on)
+\o c:/spool.txt        -- направить вывод в файл (аналог spool ...)
+-- ... выполняете запросы ...
+\o                     -- выключить вывод в файл (аналог spool off)
+(Если у вас Linux/macOS — путь будет типа /tmp/spool.txt.)
+1) Список всех должностей в отделе 80 (без повторов) и местоположение
+В HR должность лежит в jobs, отдел у сотрудника в employees, местоположение отдела в departments -> locations.
+SELECT DISTINCT
+       j.job_title,
+       l.city,
+       l.street_address,
+       l.postal_code
+FROM employees   e
+JOIN jobs        j ON j.job_id = e.job_id
+JOIN departments d ON d.department_id = e.department_id
+JOIN locations   l ON l.location_id = d.location_id
+WHERE e.department_id = 80
+ORDER BY j.job_title, l.city;
+2) Фамилии, название отдела, город и местоположение отделов для всех, у кого есть комиссионные
+В HR комиссионные — commission_pct (обычно IS NOT NULL).
+SELECT
+       e.last_name,
+       d.department_name,
+       l.city,
+       l.street_address,
+       l.postal_code
+FROM employees   e
+JOIN departments d ON d.department_id = e.department_id
+JOIN locations   l ON l.location_id = d.location_id
+WHERE e.commission_pct IS NOT NULL
+ORDER BY e.last_name;
+3) Фамилии служащих, содержащие буквы «a» (в нижнем регистре), с названиями отделов
+Требование: буква «a» в строчном регистре → удобно привести фамилию к lower().
+SELECT
+       e.last_name,
+       d.department_name
+FROM employees   e
+JOIN departments d ON d.department_id = e.department_id
+WHERE lower(e.last_name) LIKE '%a%'
+ORDER BY e.last_name;
+4) Фамилия, должность, номер отдела и название отдела всех, кто работает в городе Toronto
+Город — в locations.city.
+SELECT
+       e.last_name,
+       j.job_title,
+       d.department_id,
+       d.department_name
+FROM employees   e
+JOIN jobs        j ON j.job_id = e.job_id
+JOIN departments d ON d.department_id = e.department_id
+JOIN locations   l ON l.location_id = d.location_id
+WHERE l.city = 'Toronto'
+ORDER BY e.last_name;
+5) Фамилии и номера служащих + фамилии и номера их менеджеров
+Названия столбцов: Employee, Emp#, Manager, MGR#
+SELECT
+       e.last_name  AS "Employee",
+       e.employee_id AS "Emp#",
+       m.last_name  AS "Manager",
+       m.employee_id AS "MGR#"
+FROM employees e
+JOIN employees m ON m.employee_id = e.manager_id
+ORDER BY e.employee_id;
+6) Изменить запрос 5: включить всех служащих, включая King без менеджера
+Отсортировать по возрастанию номера служащего
+Нужен LEFT JOIN.
+SELECT
+       e.last_name   AS "Employee",
+       e.employee_id AS "Emp#",
+       m.last_name   AS "Manager",
+       m.employee_id AS "MGR#"
+FROM employees e
+LEFT JOIN employees m ON m.employee_id = e.manager_id
+ORDER BY e.employee_id;
+7) Номер отдела, фамилия служащего и фамилии всех служащих, работающих в одном отделе с данным служащим
+Это self-join по department_id. Чтобы не выводить самого себя — <>.
+SELECT
+       e.department_id AS "Dept#",
+       e.last_name     AS "Employee",
+       c.last_name     AS "Coworker"
+FROM employees e
+JOIN employees c
+  ON c.department_id = e.department_id
+ AND c.employee_id  <> e.employee_id
+ORDER BY e.department_id, e.last_name, c.last_name;
+8) Фамилия, должность, название отдела, оклад всех служащих
+SELECT
+       e.last_name,
+       j.job_title,
+       d.department_name,
+       e.salary
+FROM employees   e
+JOIN jobs        j ON j.job_id = e.job_id
+LEFT JOIN departments d ON d.department_id = e.department_id
+ORDER BY e.last_name;
+(Я сделал LEFT JOIN departments, чтобы сотрудники без отдела тоже попали — это обычно полезно.)
+9) Фамилии и даты найма всех, кто нанят после Davies
+Использовать декартово произведение (как требуют)
+Тут специально используем запись через запятую (CROSS JOIN логика), как в Oracle-стиле.
+SELECT
+       e.last_name,
+       e.hire_date
+FROM employees e, employees d
+WHERE d.last_name = 'Davies'
+  AND e.hire_date > d.hire_date
+ORDER BY e.hire_date, e.last_name;
+10) Служащие, нанятые раньше своих менеджеров: фамилии и даты найма служащих и менеджеров
+SELECT
+       e.last_name  AS employee_last_name,
+       e.hire_date  AS employee_hire_date,
+       m.last_name  AS manager_last_name,
+       m.hire_date  AS manager_hire_date
+FROM employees e
+JOIN employees m ON m.employee_id = e.manager_id
+WHERE e.hire_date < m.hire_date
+ORDER BY e.hire_date;
